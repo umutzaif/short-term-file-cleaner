@@ -1,0 +1,22 @@
+# System files
+.system/cleanup.log
+.system/config.json
+.system/protected-files.json
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# User files (everything except system files)
+*
+!.gitignore
+!LICENSE
+!README.md
+!CHANGELOG.md
+!MainApp.ps1
+!.system/
+!.system/ShortTermFileCleaner.ps1
+!.system/ConfigEditor.ps1
+!.system/Install.ps1
+!.system/Uninstall.ps1
+!screenshots/
