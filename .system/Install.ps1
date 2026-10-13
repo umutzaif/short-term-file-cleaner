@@ -1,6 +1,6 @@
-﻿# Kısa Süreli Dosya Temizleyici - Kurulum Betiği
-# Sessiz başlatıcıyı derler, oturum açılışı görevini ve Başlat menüsü kısayolunu oluşturur.
-# (Aynı işlem MainApp.ps1 > Genel Bakış > Otomatik başlatma kartından da yapılabilir.)
+﻿# Kısa Süreli Dosya Temizleyici - Kurulum Betiği (komut satırı)
+# Normalde gerekmez: "Dosya Temizleyici.exe" ilk açılışta kurulum sihirbazını gösterir.
+# Bu betik aynı adımları (otomatik başlatma, masaüstü kısayolu, klasör simgesi) doğrudan uygular.
 
 . (Join-Path $PSScriptRoot 'Core.ps1')
 
@@ -8,23 +8,18 @@ Write-Host 'Kısa Süreli Dosya Temizleyici - Kurulum' -ForegroundColor Cyan
 Write-Host '======================================' -ForegroundColor Cyan
 Write-Host ''
 
-try {
-    $mode = Install-CleanupTask -AllowElevation
+Invoke-Migration
+$errors = Invoke-Setup -Options @('autostart', 'desktop', 'foldericon') -AllowElevation
+if ($errors) {
+    Write-Host 'Kurulum bazı hatalarla tamamlandı:' -ForegroundColor Yellow
+    $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+}
+else {
     Write-Host 'Kurulum başarıyla tamamlandı!' -ForegroundColor Green
-    if ($mode -eq 'launcher') {
-        Write-Host 'Oturum her açıldığında klasör, hiçbir pencere açılmadan denetlenecek.' -ForegroundColor Green
-    }
-    else {
-        Write-Host 'Sessiz başlatıcı derlenemedi; yedek yöntem (conhost --headless) kullanıldı.' -ForegroundColor Yellow
-    }
-    Write-Host "Başlat menüsüne 'Kısa Süreli Dosya Temizleyici' kısayolu eklendi." -ForegroundColor Green
-    Write-Host ''
-    Write-Host "Klasör konumu: $script:BaseFolder" -ForegroundColor Cyan
+    Write-Host 'Oturum her açıldığında uygulama açılacak ve süresi dolan dosyalar temizlenecek.' -ForegroundColor Green
+    Write-Host 'Masaüstüne ve Başlat menüsüne kısayol eklendi.' -ForegroundColor Green
 }
-catch {
-    Write-Host 'HATA: Görev kaydedilemedi!' -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
-}
-
+Write-Host ''
+Write-Host "Klasör konumu: $script:BaseFolder" -ForegroundColor Cyan
 Write-Host ''
 pause

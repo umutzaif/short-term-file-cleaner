@@ -1,5 +1,5 @@
 ﻿# Kısa Süreli Dosya Temizleyici - Kaldırma Betiği
-# Oturum açılışı görevini ve Başlat menüsü kısayolunu kaldırır; isteğe bağlı olarak klasörü siler.
+# Otomatik başlatmayı, kısayolları ve klasör simgesini kaldırır; isteğe bağlı olarak klasörü siler.
 
 . (Join-Path $PSScriptRoot 'Core.ps1')
 
@@ -8,8 +8,14 @@ Write-Host '=======================================' -ForegroundColor Cyan
 Write-Host ''
 
 try {
-    if (Uninstall-CleanupTask -AllowElevation) { Write-Host 'Görev başarıyla kaldırıldı!' -ForegroundColor Green }
-    else { Write-Host 'Görev bulunamadı. Zaten kaldırılmış olabilir.' -ForegroundColor Yellow }
+    if (Uninstall-CleanupTask -AllowElevation) { Write-Host 'Otomatik başlatma kaldırıldı.' -ForegroundColor Green }
+    else { Write-Host 'Otomatik başlatma zaten kurulu değil.' -ForegroundColor Yellow }
+    foreach ($lnk in @($script:DesktopLink, $script:StartMenuLink)) {
+        if (Test-Path -LiteralPath $lnk) { Remove-Item -LiteralPath $lnk -Force }
+    }
+    Remove-FolderIcon
+    Save-Config ([pscustomobject]@{ setupDone = $false })
+    Write-Host 'Kısayollar ve klasör simgesi kaldırıldı.' -ForegroundColor Green
 }
 catch {
     Write-Host 'HATA: Görev kaldırılamadı!' -ForegroundColor Red

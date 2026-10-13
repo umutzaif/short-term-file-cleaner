@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.1.0] - 2026-10-14
+
+### Added
+- **`Dosya Temizleyici.exe`**: Uygulama artık çift tıklanan bir exe. PowerShell motorunu kendi süreci içinde
+  barındırır; ayrı bir `powershell.exe` başlatılmadığı için PowerShell penceresi hiçbir koşulda açılmaz.
+  Görev çubuğunda ve Görev Yöneticisi'nde uygulamanın adı ve simgesi görünür. "Run with PowerShell" gerekmez.
+- **Kurulum sihirbazı** (ilk açılış): Oturum açılışında başlatma, masaüstü kısayolu ve klasör simgesi,
+  hepsi varsayılan olarak açık. ZIP başka bir yere açıldıysa uygulama kendini Masaüstü\short-term-files'a kurar.
+- **Yeni simgeler**: Uygulama için kum saati simgesi (eski çöp kutusu/silgi yerine), `short-term-files` klasörü
+  için masaüstünde kolayca fark edilen saat rozetli renkli klasör simgesi (`desktop.ini`).
+- **Animasyonlu silme geri bildirimi**: Sil'e basınca önce silinecek dosyaları gösteren onay ekranı, ardından
+  her dosya gerçekten silindikçe dolan ilerleme halkası ve son silinenler listesi, sonunda çizilen onay işaretiyle
+  "N dosya silindi · X MB yer açıldı" özeti. Silinemeyen dosyalar açıkça listelenir.
+- Ayarlar: "Oturum açılışında her zaman göster", masaüstü kısayolu ve klasör simgesi düğmeleri.
+- Oturum açılışında süresi dolan dosyalar silindiyse bilgi bildirimi.
+
+### Changed
+- **Oturum açılışında uygulama penceresi açılır** (varsayılan). Yalnızca PowerShell penceresi açılmaz.
+  İstenirse Ayarlar'dan "yalnızca incelenecek dosya varsa aç" davranışına dönülebilir.
+- **Tüm sistem dosyaları gizli `.system` klasöründe**: `MainApp.ps1`, `CHANGELOG.md`, `LICENSE`, simgeler ve derleme
+  betikleri taşındı. Kökte yalnızca `Dosya Temizleyici.exe` kalır. README `.github/README.md`'ye taşındı.
+- **Sistem dosyaları korunamaz/korumaları değiştirilemez**: Uygulama dosyaları listelerde görünmez; koruma
+  listesine eklenemez, listeden kaldırılamaz ve silinemez. Eski sürümlerin koruma listesine eklediği uygulama
+  dosyaları otomatik temizlenir, v1'in kökte bıraktığı `cleanup.log` `.system\cleanup-v1.log`'a taşınır.
+- Otomatik başlatma görevi `Dosya Temizleyici.exe /startup` çalıştırır; eski görevler aynı klasördeyse otomatik
+  taşınır (başka klasördeki kopyalara dokunulmaz).
+- v3.0'ın `Launcher.exe` başlatıcısı kaldırıldı.
+
 ## [3.0.0] - 2026-10-13
 
 ### Fixed

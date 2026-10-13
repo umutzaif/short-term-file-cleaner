@@ -1,14 +1,16 @@
-﻿# Kısa Süreli Dosya Temizleyici v3.0
+﻿# Kısa Süreli Dosya Temizleyici v3.1
 # Ana uygulama: Genel Bakış, İnceleme (Sil / Koru / Atla), Korunanlar, Ayarlar, Geçmiş, Hakkında
 # GitHub: https://github.com/umutzaif/short-term-file-cleaner
 #
-#   MainApp.ps1            -> Genel Bakış ile açılır
-#   MainApp.ps1 -Startup   -> Oturum açılışı modu: süresi dolanları siler; incelenecek dosya varsa
-#                             İnceleme sayfasıyla açılır (tüm sayfalara erişilebilir), yoksa sessizce çıkar
+# Normalde kök klasördeki "Dosya Temizleyici.exe" ile açılır (PowerShell penceresi olmadan).
+#   MainApp.ps1                 -> Genel Bakış (ilk açılışta kurulum sihirbazı)
+#   MainApp.ps1 -Startup        -> Oturum açılışı: süresi dolanları siler, uygulamayı açar
+#                                  (incelenecek dosya varsa İnceleme sayfasıyla)
+#   MainApp.ps1 -Setup a,b,c    -> Kurulum seçimlerini uygular (autostart, desktop, foldericon)
 
-param([switch]$Startup)
+param([switch]$Startup, [string]$Setup)
 
-. (Join-Path $PSScriptRoot '.system\Core.ps1')
+. (Join-Path $PSScriptRoot 'Core.ps1')
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -41,7 +43,6 @@ Import-UiKit
 [System.Windows.Forms.Application]::EnableVisualStyles()
 
 #region Tek örnek
-$script:AppTitle = 'Kısa Süreli Dosya Temizleyici'
 $createdNew = $false
 $script:InstanceMutex = New-Object System.Threading.Mutex($true, 'Local\ShortTermFileCleaner.UI', [ref]$createdNew)
 if (-not $createdNew) {
@@ -50,18 +51,23 @@ if (-not $createdNew) {
 }
 #endregion
 
+Invoke-Migration
+if ($Setup) { $script:SetupErrors = Invoke-Setup -Options ($Setup -split ',') -AllowElevation }
+
 #region Oturum açılışı taraması
+$script:AutoDeleted = 0
+$script:StartupPending = 0
 if ($Startup) {
     Invoke-LogRotation
     $cfg = Get-Config
     Write-Log "Baslangic taramasi: Uyari=$($cfg.warningDays) gun, Silme=$($cfg.deletionDays) gun"
-    [void](Invoke-AutoCleanup -Config $cfg)
-    $pending = @(Get-ManagedFiles -Config $cfg | Where-Object { $_.Stage -eq 'warning' })
-    if ($pending.Count -eq 0) {
+    $script:AutoDeleted = Invoke-AutoCleanup -Config $cfg
+    $script:StartupPending = @(Get-ManagedFiles -Config $cfg | Where-Object { $_.Stage -eq 'warning' }).Count
+    if ($script:StartupPending -gt 0) { Write-Log "Uyari: $($script:StartupPending) dosya incelemeyi bekliyor" }
+    elseif (-not $cfg.showOnStartup) {
         Write-Log 'Islem gerektiren dosya bulunamadi'
         exit
     }
-    Write-Log "Uyari: $($pending.Count) dosya incelemeyi bekliyor"
 }
 #endregion
 
@@ -186,7 +192,7 @@ $form.StartPosition = 'CenterScreen'
 $form.BackColor = $C.Bg
 $form.ForeColor = $C.Text
 $form.Font = New-UiFont 9.5
-$form.Icon = [StfcUi.Gfx]::GlyphIcon($G.Broom, $C.Accent, $C.Accent2)
+$form.Icon = if (Test-Path -LiteralPath $script:AppIcon) { New-Object System.Drawing.Icon($script:AppIcon) } else { [StfcUi.Gfx]::GlyphIcon($G.Clock, $C.Accent, $C.Accent2) }
 $form.Add_HandleCreated({ [StfcUi.Native]::StyleWindow($form.Handle, $C.Side) })
 
 # Kenar çubuğu
@@ -211,17 +217,17 @@ $brand = New-Object System.Windows.Forms.Panel
 $brand.Height = 64
 Add-Dock $side $brand 'Top'
 
-$logo = New-Object StfcUi.Card
-$logo.SetBounds(4, 6, 46, 46)
-$logo.Radius = 13
-$logo.Fill = $C.Accent
-$logo.Fill2 = $C.Accent2
-$logo.BorderColor = [System.Drawing.Color]::Transparent
-$logo.Padding = New-Object System.Windows.Forms.Padding(0)
+function Get-AppImage {
+    if (-not (Test-Path -LiteralPath $script:AppPng)) { return $null }
+    $ms = New-Object System.IO.MemoryStream(, [System.IO.File]::ReadAllBytes($script:AppPng))
+    [System.Drawing.Image]::FromStream($ms)
+}
+$logo = New-Object System.Windows.Forms.PictureBox
+$logo.SetBounds(2, 4, 50, 50)
+$logo.SizeMode = 'Zoom'
+$logo.BackColor = [System.Drawing.Color]::Transparent
+$logo.Image = Get-AppImage
 $brand.Controls.Add($logo)
-$logoGlyph = New-Label $G.Broom (New-UiFont 15 ([StfcUi.Theme]::IconFamily)) ([System.Drawing.Color]::White) 'MiddleCenter'
-$logoGlyph.Dock = 'Fill'
-$logo.Controls.Add($logoGlyph)
 
 $brandTitle = New-Label 'Kısa Süreli' (New-UiFont 11.5 'Segoe UI Semibold')
 $brandTitle.SetBounds(60, 6, 160, 24)
@@ -460,16 +466,15 @@ $autoLast.Height = 24
 Add-Dock $autoCard $autoLast 'Top'
 $autoBtn = New-Button 'Kur' $G.Power 'Solid' $C.Accent 200 42 {
     try {
-        if ($script:TaskInfo -and $script:TaskInfo.Silent) {
+        if ($script:TaskInfo -and $script:TaskInfo.IsCurrent) {
             $ans = [System.Windows.Forms.MessageBox]::Show('Otomatik başlatma kapatılsın mı? Oturum açılışında dosyalar artık denetlenmeyecek.', 'Onay', 'YesNo', 'Question')
             if ($ans -ne 'Yes') { return }
             [void](Uninstall-CleanupTask -AllowElevation)
             Show-Toast 'Otomatik başlatma kapatıldı' $C.Warning $G.Power
         }
         else {
-            $mode = Install-CleanupTask -AllowElevation
-            $msg = if ($mode -eq 'launcher') { 'Otomatik başlatma etkin · pencere açılmadan çalışacak' } else { 'Otomatik başlatma etkin (yedek yöntem)' }
-            Show-Toast $msg
+            Install-CleanupTask -AllowElevation
+            Show-Toast 'Otomatik başlatma etkin · oturum açılışında uygulama açılacak'
         }
     }
     catch { [System.Windows.Forms.MessageBox]::Show("İşlem başarısız: $($_.Exception.Message)", 'Hata', 'OK', 'Error') | Out-Null }
@@ -513,19 +518,60 @@ $revSummary = New-Label '' (New-UiFont 10 'Segoe UI Semibold')
 $revSummary.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
 Add-Dock $revBar $revSummary 'Fill'
 
+function Wait-Ui {
+    param([int]$Milliseconds)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    do {
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 8
+    } while ($sw.ElapsedMilliseconds -lt $Milliseconds)
+}
+
+# Onay -> animasyonlu silme -> sonuç özeti. Her dosya gerçekten silindikçe ilerleme halkası dolar.
+function Invoke-DeleteFlow {
+    param([string[]]$Paths)
+    $script:DelPaths = $Paths
+    $script:DelConfig = Get-Config
+    $script:DelResult = $null
+    $size = [long]0
+    foreach ($p in $Paths) { if ($script:FileIndex.ContainsKey($p)) { $size += $script:FileIndex[$p].Size } }
+
+    $script:DelDialog = New-Object StfcUi.DeleteDialog
+    $script:DelDialog.Icon = $form.Icon
+    $script:DelDialog.Prepare([string[]]@($Paths | ForEach-Object { [System.IO.Path]::GetFileName($_) }), (Format-Size $size), $script:DelConfig.useRecycleBin)
+    $script:DelDialog.Add_Confirmed({
+            $script:DelPace = [math]::Max(25, [math]::Min(220, [int](1800 / [math]::Max(1, $script:DelPaths.Count))))
+            Wait-Ui 250
+            $r = Remove-Files -Paths $script:DelPaths -Recycle $script:DelConfig.useRecycleBin -OnProgress {
+                param($Path, $Ok, $Err)
+                $script:DelDialog.Advance([System.IO.Path]::GetFileName($Path), $Ok)
+                Wait-Ui $script:DelPace
+            }
+            Wait-Ui 450
+            $freed = Format-Size $r.Freed
+            if ($r.Failed.Count -eq 0) {
+                $title = 'Temizlik tamamlandı'
+                $sub = "$($r.Deleted) dosya silindi · $freed yer açıldı"
+            }
+            else {
+                $title = 'Kısmen tamamlandı'
+                $sub = "$($r.Deleted) dosya silindi · $($r.Failed.Count) dosya silinemedi"
+            }
+            $note = if ($r.Failed.Count -gt 0) { 'Silinemeyen dosyalar başka bir programda açık olabilir. Ayrıntılar Geçmiş sayfasında.' }
+            elseif ($script:DelConfig.useRecycleBin) { "Dosyalar Geri Dönüşüm Kutusu'nda; istediğiniz zaman geri alabilirsiniz." }
+            else { 'Dosyalar kalıcı olarak silindi. Her işlem Geçmiş sayfasına kaydedildi.' }
+            $script:DelDialog.Finish($title, $sub, $note, [string[]]$r.Failed)
+            $script:DelResult = $r
+        })
+    [void]$script:DelDialog.ShowDialog($form)
+    $script:DelDialog.Dispose()
+    if ($script:DelResult) { Update-All }
+}
+
 $btnDelete = New-Button 'Sil' $G.Delete 'Solid' $C.Danger 130 42 {
     $paths = Get-CheckedPaths $revGrid
     if ($paths.Count -eq 0) { Show-Toast 'Önce en az bir dosya seçin' $C.Warning $G.Warn; return }
-    $cfg = Get-Config
-    $verb = if ($cfg.useRecycleBin) { "Geri Dönüşüm Kutusu'na taşınacak" } else { 'kalıcı olarak silinecek' }
-    $ans = [System.Windows.Forms.MessageBox]::Show("$($paths.Count) dosya $verb. Devam edilsin mi?", 'Silme onayı', 'YesNo', 'Warning')
-    if ($ans -ne 'Yes') { return }
-    $result = Remove-Files -Paths $paths -Recycle $cfg.useRecycleBin
-    Update-All
-    if ($result.Failed.Count -gt 0) {
-        [System.Windows.Forms.MessageBox]::Show("$($result.Deleted) dosya silindi, $($result.Failed.Count) dosya silinemedi:`n`n" + ($result.Failed -join "`n"), 'Bazı dosyalar silinemedi', 'OK', 'Warning') | Out-Null
-    }
-    else { Show-Toast "$($result.Deleted) dosya silindi" $C.Danger $G.Delete }
+    Invoke-DeleteFlow $paths
 }
 $btnProtect = New-Button 'Koru' $G.Shield 'Solid' $C.Success 130 42 {
     $paths = Get-CheckedPaths $revGrid
@@ -636,8 +682,8 @@ $prot.Actions.Controls.Add((New-Button 'Dosya Ekle' $G.Add 'Solid' $C.Accent 140
             $dlg.Multiselect = $true
             $dlg.Title = 'Korunacak dosyaları seçin'
             if ($dlg.ShowDialog($form) -ne 'OK') { return }
-            $inside = @($dlg.FileNames | Where-Object { Test-InBaseFolder $_ })
-            if ($inside.Count -lt $dlg.FileNames.Count) { Show-Toast 'Yalnızca short-term-files içindeki dosyalar korunabilir' $C.Warning $G.Warn }
+            $inside = @($dlg.FileNames | Where-Object { (Test-InBaseFolder $_) -and -not (Test-SystemPath (Get-RelativePath $_)) })
+            if ($inside.Count -lt $dlg.FileNames.Count) { Show-Toast 'Yalnızca short-term-files içindeki kendi dosyalarınız korunabilir' $C.Warning $G.Warn }
             if ($inside.Count -gt 0) {
                 $n = Add-Protection $inside
                 Update-All
@@ -751,13 +797,23 @@ $numWarn.Add_ValueChanged({ Update-DurationPreview })
 $numDel.Add_ValueChanged({ Update-DurationPreview })
 
 Add-Spacer $set.Page 16
-$recCard = New-Card 96 0
+$recCard = New-Card 182 0
 $recCard.Width = 980
 New-SettingRow $recCard "Geri Dönüşüm Kutusu'nu kullan" 'Açıkken silinen dosyalar kalıcı olarak silinmek yerine Geri Dönüşüm Kutusu''na taşınır.' 22
 $togRecycle = New-Object StfcUi.Toggle
 $togRecycle.SetBounds(892, 34, 50, 26)
 $togRecycle.Anchor = 'Top,Right'
 $recCard.Controls.Add($togRecycle)
+$sep2 = New-Object System.Windows.Forms.Panel
+$sep2.BackColor = $C.Border
+$sep2.SetBounds(22, 92, 936, 1)
+$sep2.Anchor = 'Top,Left,Right'
+$recCard.Controls.Add($sep2)
+New-SettingRow $recCard 'Oturum açılışında her zaman göster' 'Kapalıyken uygulama yalnızca incelenecek dosya olduğunda açılır.' 110
+$togStartup = New-Object StfcUi.Toggle
+$togStartup.SetBounds(892, 122, 50, 26)
+$togStartup.Anchor = 'Top,Right'
+$recCard.Controls.Add($togStartup)
 Add-Dock $set.Page $recCard 'Top'
 
 Add-Spacer $set.Page 20
@@ -770,7 +826,7 @@ $btnSave = New-Button 'Kaydet' $G.Check 'Solid' $C.Accent 140 42 {
         Show-Toast 'Otomatik silme süresi, uyarı süresinden büyük olmalı' $C.Danger $G.Warn
         return
     }
-    Save-Config ([pscustomobject]@{ warningDays = [int]$numWarn.Value; deletionDays = [int]$numDel.Value; useRecycleBin = $togRecycle.Checked })
+    Save-Config ([pscustomobject]@{ warningDays = [int]$numWarn.Value; deletionDays = [int]$numDel.Value; useRecycleBin = $togRecycle.Checked; showOnStartup = $togStartup.Checked })
     Update-All
     Show-Toast 'Ayarlar kaydedildi'
 }
@@ -780,14 +836,28 @@ $btnDefaults = New-Button 'Varsayılanlar' $G.Refresh 'Ghost' $C.Accent 150 42 {
     $numWarn.Value = 7
     $numDel.Value = 14
     $togRecycle.Checked = $false
+    $togStartup.Checked = $true
 }
-$btnDefaults.Margin = New-Object System.Windows.Forms.Padding(0)
+$btnDefaults.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
 $setBar.Controls.Add($btnDefaults)
+$btnDeskLink = New-Button 'Masaüstü kısayolu' $G.Link 'Ghost' $C.Accent 190 42 {
+    Install-Shortcuts -Desktop -StartMenu
+    Show-Toast 'Masaüstüne kısayol oluşturuldu'
+}
+$btnDeskLink.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+$setBar.Controls.Add($btnDeskLink)
+$btnFolderIcon = New-Button 'Klasör simgesi' $G.Folder 'Ghost' $C.Accent 170 42 {
+    if (Set-FolderIcon) { Show-Toast 'Klasör simgesi uygulandı (masaüstü yenilenince görünür)' }
+    else { Show-Toast 'Klasör simgesi uygulanamadı' $C.Danger $G.Warn }
+}
+$btnFolderIcon.Margin = New-Object System.Windows.Forms.Padding(0)
+$setBar.Controls.Add($btnFolderIcon)
 
 function Update-SettingsView {
     $numDel.Value = [math]::Min(365, [math]::Max(1, $script:Config.deletionDays))
     $numWarn.Value = [math]::Min(365, [math]::Max(1, $script:Config.warningDays))
     $togRecycle.Checked = $script:Config.useRecycleBin
+    $togStartup.Checked = $script:Config.showOnStartup
     Update-DurationPreview
 }
 #endregion
@@ -950,28 +1020,35 @@ function Update-TaskStatus {
         $autoState.Text = 'Etkin'
         $autoState.ForeColor = $C.Success
         $autoLast.Text = if ($script:TaskInfo.LastRun) { "Son çalışma: $($script:TaskInfo.LastRun.ToString('dd.MM.yyyy HH:mm'))" } else { 'Henüz çalışmadı' }
-        if ($script:TaskInfo.Silent) {
-            $autoDesc.Text = 'Oturum açıldığında arka planda, hiçbir pencere açmadan çalışır. Yalnızca inceleme gerekiyorsa bu uygulama açılır.'
+        if ($script:TaskInfo.IsCurrent) {
+            $autoDesc.Text = if ($script:Config.showOnStartup) { 'Oturum açıldığında uygulama PowerShell penceresi olmadan açılır; süresi dolan dosyalar temizlenir.' }
+            else { 'Oturum açıldığında süresi dolanlar temizlenir; uygulama yalnızca incelenecek dosya varsa açılır.' }
             $autoBtn.Text = 'Kapat'
             $autoBtn.Kind = 'Outline'
             $autoBtn.Accent = $C.Danger
             $sideDot.ForeColor = $C.Success
-            $sideStatusText.Text = 'Etkin · pencere açmaz'
+            $sideStatusText.Text = 'Etkin · açılışta başlar'
         }
         else {
             $autoState.ForeColor = $C.Warning
-            $autoDesc.Text = 'Eski yöntemle kurulu: açılışta PowerShell penceresi görünebilir. Sessiz başlatıcıya geçmek için güncelleyin.'
-            $autoBtn.Text = 'Sessiz moda güncelle'
+            if ($script:TaskInfo.BelongsHere) {
+                $autoDesc.Text = 'Eski bir sürümle kurulmuş. Uygulamanın yeni sürümüyle açılması için güncelleyin.'
+                $autoBtn.Text = 'Güncelle'
+            }
+            else {
+                $autoDesc.Text = 'Otomatik başlatma başka bir klasördeki kopyaya bağlı. Bu kopyayı kullanmak için buraya taşıyın.'
+                $autoBtn.Text = 'Bu kopyaya taşı'
+            }
             $autoBtn.Kind = 'Solid'
             $autoBtn.Accent = $C.Warning
             $sideDot.ForeColor = $C.Warning
-            $sideStatusText.Text = 'Etkin · güncelleme gerekli'
+            $sideStatusText.Text = if ($script:TaskInfo.BelongsHere) { 'Etkin · güncelleme gerekli' } else { 'Başka bir kopyada etkin' }
         }
     }
     else {
         $autoState.Text = 'Kapalı'
         $autoState.ForeColor = $C.Danger
-        $autoDesc.Text = 'Kurulduğunda, oturum her açıldığında klasör sessizce denetlenir ve yalnızca gerekirse inceleme ekranı açılır.'
+        $autoDesc.Text = 'Kurulduğunda, oturum her açıldığında uygulama açılır ve süresi dolan dosyalar temizlenir.'
         $autoLast.Text = ''
         $autoBtn.Text = 'Otomatik başlatmayı kur'
         $autoBtn.Kind = 'Solid'
@@ -982,11 +1059,124 @@ function Update-TaskStatus {
 }
 #endregion
 
+#region Kurulum sihirbazı (ilk açılış)
+function Show-SetupDialog {
+    $dlg = New-Object System.Windows.Forms.Form
+    $dlg.Text = 'Kurulum'
+    $dlg.FormBorderStyle = 'FixedDialog'
+    $dlg.MaximizeBox = $false
+    $dlg.MinimizeBox = $false
+    $dlg.ShowInTaskbar = $false
+    $dlg.StartPosition = 'CenterParent'
+    $dlg.AutoScaleMode = 'None'
+    $dlg.ClientSize = New-Object System.Drawing.Size(560, 540)
+    $dlg.BackColor = $C.Bg
+    $dlg.ForeColor = $C.Text
+    $dlg.Font = New-UiFont 9.5
+    $dlg.Icon = $form.Icon
+    $script:WizDlg = $dlg
+    $dlg.Add_HandleCreated({ [StfcUi.Native]::StyleWindow($this.Handle, $C.Bg) })
+
+    $hero = New-Card 150 0
+    $hero.SetBounds(20, 20, 520, 150)
+    $hero.Fill = [StfcUi.Gfx]::Mix($C.Card, $C.Accent, 0.40)
+    $hero.Fill2 = [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.28)
+    $hero.BorderColor = [StfcUi.Gfx]::Mix($C.Border, $C.Accent, 0.4)
+    $dlg.Controls.Add($hero)
+    $pic = New-Object System.Windows.Forms.PictureBox
+    $pic.SetBounds(26, 36, 76, 76)
+    $pic.SizeMode = 'Zoom'
+    $pic.BackColor = [System.Drawing.Color]::Transparent
+    $pic.Image = Get-AppImage
+    $hero.Controls.Add($pic)
+    $t = New-Label 'Hoş geldiniz!' (New-UiFont 18 'Segoe UI Semibold') ([System.Drawing.Color]::White)
+    $t.SetBounds(120, 30, 380, 40)
+    $hero.Controls.Add($t)
+    $cfg = Get-Config
+    $d = New-Label "short-term-files klasörüne bıraktığınız dosyalar $($cfg.warningDays) gün sonra size sorulur, $($cfg.deletionDays) gün sonra otomatik temizlenir." (New-UiFont 10) ([System.Drawing.Color]::FromArgb(230, 234, 255)) 'TopLeft'
+    $d.SetBounds(122, 72, 380, 60)
+    $hero.Controls.Add($d)
+
+    $opts = New-Card 238 0
+    $opts.SetBounds(20, 186, 520, 238)
+    $dlg.Controls.Add($opts)
+    $rows = @(
+        @('autostart', 'Oturum açılışında başlat', 'Bilgisayar açıldığında uygulama açılır ve süresi dolanları temizler.'),
+        @('desktop', 'Masaüstüne kısayol ekle', 'Uygulamayı masaüstündeki kısayoldan tek tıkla açın.'),
+        @('foldericon', 'Klasöre özel simge ver', 'short-term-files klasörü masaüstünde kolayca fark edilsin.')
+    )
+    $script:WizToggles = @{}
+    for ($i = 0; $i -lt $rows.Count; $i++) {
+        $y = 18 + $i * 72
+        $rt = New-Label $rows[$i][1] (New-UiFont 10.5 'Segoe UI Semibold')
+        $rt.SetBounds(20, $y, 380, 24)
+        $opts.Controls.Add($rt)
+        $rd = New-Label $rows[$i][2] (New-UiFont 9) $C.Muted 'TopLeft'
+        $rd.SetBounds(20, $y + 25, 400, 36)
+        $opts.Controls.Add($rd)
+        $tg = New-Object StfcUi.Toggle
+        $tg.SetBounds(450, $y + 8, 50, 26)
+        $tg.Checked = $true
+        $opts.Controls.Add($tg)
+        $script:WizToggles[$rows[$i][0]] = $tg
+    }
+
+    if (-not (Test-AtDesktopTarget)) {
+        $loc = New-Label "Uygulama Masaüstü\short-term-files klasörüne kurulacak." (New-UiFont 9 'Segoe UI Semibold') $C.Warning
+        $loc.SetBounds(22, 432, 520, 24)
+        $dlg.Controls.Add($loc)
+    }
+
+    $script:WizardChoice = $null
+    $later = New-Button 'Şimdi değil' '' 'Ghost' $C.Accent 150 44 { $script:WizardChoice = @(); $script:WizDlg.Close() }
+    $later.SetBounds(214, 470, 150, 44)
+    $dlg.Controls.Add($later)
+    $ok = New-Button 'Kur' $G.Check 'Solid' $C.Accent 160 44 {
+        $script:WizardChoice = @($script:WizToggles.Keys | Where-Object { $script:WizToggles[$_].Checked })
+        if ($script:WizardChoice.Count -eq 0) { $script:WizardChoice = @('none') }
+        $script:WizDlg.Close()
+    }
+    $ok.SetBounds(380, 470, 160, 44)
+    $dlg.Controls.Add($ok)
+
+    $scale = [StfcUi.Theme]::Scale
+    if ([math]::Abs($scale - 1) -gt 0.01) { $dlg.Scale((New-Object System.Drawing.SizeF($scale, $scale))) }
+    [void]$dlg.ShowDialog($form)
+    $dlg.Dispose()
+    return $script:WizardChoice
+}
+
+function Invoke-SetupWizard {
+    $choice = Show-SetupDialog
+    if ($null -eq $choice -or $choice.Count -eq 0) {
+        Save-Config ([pscustomobject]@{ setupDone = $true })
+        Write-Log 'Kurulum sihirbazi atlandi'
+        return
+    }
+    $options = @($choice | Where-Object { $_ -ne 'none' })
+    if (-not (Test-AtDesktopTarget)) {
+        try {
+            $target = Copy-AppToDesktop
+            $script:RelaunchExe = Join-Path $target $script:AppExeName
+            $script:RelaunchArgs = '/setup:' + $(if ($options) { $options -join ',' } else { 'none' })
+            Save-Config ([pscustomobject]@{ setupDone = $true })
+            $form.Close()
+        }
+        catch { [System.Windows.Forms.MessageBox]::Show("Kurulum başarısız: $($_.Exception.Message)", 'Hata', 'OK', 'Error') | Out-Null }
+        return
+    }
+    $errors = Invoke-Setup -Options $options -AllowElevation
+    Update-TaskStatus
+    if ($errors) { Show-Toast ($errors -join ' · ') $C.Warning $G.Warn }
+    else { Show-Toast 'Kurulum tamamlandı' }
+}
+#endregion
+
 #region Başlatma
 $form.Add_Load({
         Update-All
         Update-SettingsView
-        if ($Startup) { Show-Page 'review' } else { Show-Page 'dash' }
+        if ($Startup -and $script:StartupPending -gt 0) { Show-Page 'review' } else { Show-Page 'dash' }
     })
 
 $form.Add_Shown({
@@ -995,17 +1185,20 @@ $form.Add_Shown({
             $form.Activate()
             $form.TopMost = $false
         }
+        if ($script:AutoDeleted -gt 0) { Show-Toast "Süresi dolan $($script:AutoDeleted) dosya otomatik temizlendi" $C.Accent2 $G.Clock }
+        if ($script:SetupErrors) { Show-Toast ($script:SetupErrors -join ' · ') $C.Warning $G.Warn }
         # Görev Zamanlayıcı sorgusu yavaş olabilir; pencere çizildikten sonra çalıştır.
         $deferred = New-Object System.Windows.Forms.Timer
         $deferred.Interval = 150
         $deferred.Add_Tick({
                 $this.Stop()
                 Update-TaskStatus
-                # Eski (pencere açan) görevi sessiz başlatıcıya taşı
-                if ($script:TaskInfo -and -not $script:TaskInfo.Silent) {
-                    try { [void](Install-CleanupTask); Update-TaskStatus }
+                # Bu klasörde eski sürümle kurulmuş görevi yeni exe'ye taşı (başka konumdaki kurulumlara dokunma)
+                if ($script:TaskInfo -and -not $script:TaskInfo.IsCurrent -and $script:TaskInfo.BelongsHere) {
+                    try { Install-CleanupTask; Update-TaskStatus }
                     catch { Write-Log "Gorev otomatik guncellenemedi: $($_.Exception.Message)" }
                 }
+                if (-not $Startup -and -not $script:Config.setupDone) { Invoke-SetupWizard }
             })
         $deferred.Start()
     })
@@ -1021,4 +1214,7 @@ $scale = [StfcUi.Theme]::Scale
 if ([math]::Abs($scale - 1) -gt 0.01) { $form.Scale((New-Object System.Drawing.SizeF($scale, $scale))) }
 $form.MinimumSize = New-Object System.Drawing.Size([StfcUi.Theme]::S(1060), [StfcUi.Theme]::S(700))
 [void]$form.ShowDialog()
+try { $script:InstanceMutex.ReleaseMutex() } catch { }
+# Kurulum masaüstüne taşındıysa yeni konumdaki uygulamayı başlat
+if ($script:RelaunchExe) { Start-Process -FilePath $script:RelaunchExe -ArgumentList $script:RelaunchArgs }
 #endregion

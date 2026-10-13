@@ -730,4 +730,308 @@ namespace StfcUi
             e.Handled = true;
         }
     }
+
+    // Silme onayi + animasyonlu ilerleme + sonuc ozeti.
+    // Akis: Prepare() -> ShowDialog() -> kullanici "Sil" der -> Confirmed olayi -> her dosya icin Advance() -> Finish()
+    public class DeleteDialog : Form
+    {
+        private enum Phase { Confirm, Working, Done }
+        private Phase phase = Phase.Confirm;
+        private string[] names = new string[0];
+        private string sizeText = "";
+        private bool recycle;
+        private int total, done, failCount;
+        private string current = "";
+        private readonly System.Collections.Generic.List<string> recent = new System.Collections.Generic.List<string>();
+        private readonly System.Collections.Generic.List<bool> recentOk = new System.Collections.Generic.List<bool>();
+        private float shown, spin;
+        private DateTime doneAt;
+        private string doneTitle = "", doneSub = "", doneNote = "";
+        private string[] failures = new string[0];
+        private readonly Timer timer = new Timer();
+        private readonly ModernButton btnCancel = new ModernButton();
+        private readonly ModernButton btnConfirm = new ModernButton();
+        private readonly ModernButton btnOk = new ModernButton();
+
+        public event EventHandler Confirmed;
+
+        public DeleteDialog()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            StartPosition = FormStartPosition.CenterParent;
+            ShowInTaskbar = false;
+            KeyPreview = true;
+            BackColor = Theme.Card;
+            Font = new Font(Theme.FontFamily, 9.75f);
+            ClientSize = new Size(Theme.S(480), Theme.S(440));
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint, true);
+
+            int bw = Theme.S(150), bh = Theme.S(44), by = ClientSize.Height - Theme.S(30) - bh;
+            btnCancel.Text = "Vazgeç"; btnCancel.Kind = ButtonKind.Ghost;
+            btnCancel.SetBounds(ClientSize.Width / 2 - bw - Theme.S(6), by, bw, bh);
+            btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+            btnConfirm.Text = "Sil"; btnConfirm.Glyph = ""; btnConfirm.Accent = Theme.Danger;
+            btnConfirm.SetBounds(ClientSize.Width / 2 + Theme.S(6), by, bw, bh);
+            btnConfirm.Click += delegate { StartWork(); };
+            btnOk.Text = "Tamam"; btnOk.Glyph = ""; btnOk.Accent = Theme.Accent; btnOk.Visible = false;
+            btnOk.SetBounds((ClientSize.Width - Theme.S(200)) / 2, by, Theme.S(200), bh);
+            btnOk.Click += delegate { DialogResult = DialogResult.OK; Close(); };
+            Controls.Add(btnCancel); Controls.Add(btnConfirm); Controls.Add(btnOk);
+
+            timer.Interval = 15;
+            timer.Tick += delegate { Animate(); };
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get { CreateParams cp = base.CreateParams; cp.ClassStyle |= 0x20000; return cp; }
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            Native.StyleWindow(Handle, Theme.Card);
+        }
+
+        public void Prepare(string[] fileNames, string size, bool toRecycle)
+        {
+            names = fileNames ?? new string[0];
+            total = names.Length;
+            sizeText = size ?? "";
+            recycle = toRecycle;
+            Invalidate();
+        }
+
+        public void Advance(string name, bool ok)
+        {
+            done++;
+            if (!ok) failCount++;
+            current = name;
+            recent.Insert(0, name); recentOk.Insert(0, ok);
+            if (recent.Count > 4) { recent.RemoveAt(4); recentOk.RemoveAt(4); }
+        }
+
+        public void Finish(string title, string sub, string note, string[] failed)
+        {
+            doneTitle = title ?? ""; doneSub = sub ?? ""; doneNote = note ?? "";
+            failures = failed ?? new string[0];
+            phase = Phase.Done;
+            doneAt = DateTime.Now;
+            btnOk.Accent = failures.Length > 0 ? Theme.Warning : Theme.Success;
+            btnOk.Visible = true;
+            btnOk.Focus();
+            timer.Start();
+        }
+
+        private void StartWork()
+        {
+            phase = Phase.Working;
+            btnCancel.Visible = false;
+            btnConfirm.Visible = false;
+            timer.Start();
+            Refresh();
+            if (Confirmed != null) Confirmed(this, EventArgs.Empty);
+        }
+
+        private void Animate()
+        {
+            float target = total == 0 ? 1f : (float)done / total;
+            shown += (target - shown) * 0.16f;
+            if (Math.Abs(target - shown) < 0.002f) shown = target;
+            spin = (spin + 7f) % 360f;
+            if (phase == Phase.Done && (DateTime.Now - doneAt).TotalMilliseconds > 1600) timer.Stop();
+            Invalidate();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (phase == Phase.Working) e.Cancel = true;
+            else timer.Stop();
+            base.OnFormClosing(e);
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Escape && phase == Phase.Confirm) { DialogResult = DialogResult.Cancel; Close(); }
+            if (e.KeyCode == Keys.Enter && phase == Phase.Done) { DialogResult = DialogResult.OK; Close(); }
+            base.OnKeyDown(e);
+        }
+
+        private void Center(Graphics g, string text, Font f, Color c, int y, int h)
+        {
+            TextRenderer.DrawText(g, text, f, new Rectangle(Theme.S(28), y, ClientSize.Width - Theme.S(56), h), c,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            int W = ClientSize.Width, H = ClientSize.Height;
+            g.Clear(Theme.Card);
+            Gfx.Hq(g);
+
+            Color tint = phase == Phase.Confirm ? Theme.Danger
+                       : phase == Phase.Working ? Theme.Accent
+                       : (failures.Length > 0 ? Theme.Warning : Theme.Success);
+            Rectangle glow = new Rectangle(0, 0, W, Theme.S(190));
+            using (LinearGradientBrush b = new LinearGradientBrush(new Rectangle(0, -1, W, glow.Height + 2), Gfx.Mix(Theme.Card, tint, 0.16f), Theme.Card, 90f))
+                g.FillRectangle(b, glow);
+            using (Pen pen = new Pen(Theme.Border)) g.DrawRectangle(pen, 0, 0, W - 1, H - 1);
+
+            using (Font title = new Font("Segoe UI Semibold", 14.5f))
+            using (Font body = new Font(Theme.FontFamily, 9.75f))
+            using (Font small = new Font(Theme.FontFamily, 9f))
+            {
+                if (phase == Phase.Confirm) PaintConfirm(g, W, title, body, small);
+                else PaintProgress(g, W, title, body, small);
+            }
+        }
+
+        private void PaintConfirm(Graphics g, int W, Font title, Font body, Font small)
+        {
+            int cx = W / 2, cy = Theme.S(72), r = Theme.S(34);
+            using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Card, Theme.Danger, 0.22f))) g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
+            Gfx.Glyph(g, "", 19f, Gfx.Mix(Theme.Danger, Color.White, 0.25f), new Rectangle(cx - r, cy - r, r * 2, r * 2));
+
+            Center(g, total + " dosya silinsin mi?", title, Theme.Text, Theme.S(118), Theme.S(34));
+            string where = recycle ? "Geri Dönüşüm Kutusu'na taşınacak" : "kalıcı olarak silinecek";
+            Center(g, "Toplam " + sizeText + " · " + where, body, Theme.Muted, Theme.S(152), Theme.S(24));
+
+            Rectangle box = new Rectangle(Theme.S(32), Theme.S(192), W - Theme.S(64), Theme.S(152));
+            using (GraphicsPath p = Gfx.Round(box, Theme.S(12)))
+            using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Card, Theme.Bg, 0.55f)))
+                g.FillPath(b, p);
+            int rowH = Theme.S(26), y = box.Y + Theme.S(10);
+            int show = Math.Min(names.Length, names.Length > 5 ? 4 : 5);
+            for (int i = 0; i < show; i++)
+            {
+                using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Danger, Theme.Card, 0.25f)))
+                    g.FillEllipse(b, box.X + Theme.S(16), y + rowH / 2 - Theme.S(3), Theme.S(6), Theme.S(6));
+                TextRenderer.DrawText(g, names[i], body, new Rectangle(box.X + Theme.S(32), y, box.Width - Theme.S(48), rowH), Theme.Text,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+                y += rowH;
+            }
+            if (names.Length > show)
+                TextRenderer.DrawText(g, "+" + (names.Length - show) + " dosya daha", small, new Rectangle(box.X + Theme.S(32), y, box.Width - Theme.S(48), rowH), Theme.Muted,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+
+        private void PaintProgress(Graphics g, int W, Font title, Font body, Font small)
+        {
+            int cx = W / 2, cy = Theme.S(118);
+            float R = Theme.S(62), th = Theme.S(10);
+            RectangleF ring = new RectangleF(cx - R, cy - R, R * 2, R * 2);
+            double ms = phase == Phase.Done ? (DateTime.Now - doneAt).TotalMilliseconds : 0;
+            Color doneColor = failures.Length > 0 ? Theme.Warning : Theme.Success;
+
+            using (Pen track = new Pen(Gfx.Mix(Theme.Card, Color.White, 0.07f), th)) g.DrawEllipse(track, ring);
+
+            if (phase == Phase.Working)
+            {
+                using (Pen shimmer = new Pen(Gfx.Mix(Theme.Card, Color.White, 0.14f), th))
+                {
+                    shimmer.StartCap = LineCap.Round; shimmer.EndCap = LineCap.Round;
+                    g.DrawArc(shimmer, ring, spin, 38f);
+                }
+            }
+
+            float sweep = shown * 360f;
+            if (sweep > 0.5f)
+            {
+                Brush brush;
+                if (phase == Phase.Done)
+                {
+                    float t = (float)Math.Min(1, ms / 350);
+                    brush = new SolidBrush(Gfx.Mix(Theme.Accent, doneColor, t));
+                }
+                else brush = new LinearGradientBrush(RectangleF.Inflate(ring, th, th), Theme.Accent, Theme.Accent2, 45f);
+                using (brush)
+                using (Pen pen = new Pen(brush, th))
+                {
+                    pen.StartCap = LineCap.Round; pen.EndCap = LineCap.Round;
+                    g.DrawArc(pen, ring, -90f, Math.Min(359.9f, sweep));
+                }
+                if (phase == Phase.Working)
+                {
+                    double a = (-90 + sweep) * Math.PI / 180;
+                    float dx = cx + (float)(R * Math.Cos(a)), dy = cy + (float)(R * Math.Sin(a));
+                    using (SolidBrush b = new SolidBrush(Color.White)) g.FillEllipse(b, dx - th * 0.32f, dy - th * 0.32f, th * 0.64f, th * 0.64f);
+                }
+            }
+
+            if (phase == Phase.Working)
+            {
+                using (Font big = new Font("Segoe UI Semibold", 20f))
+                    TextRenderer.DrawText(g, done + " / " + total, big, new Rectangle(cx - (int)R, cy - Theme.S(22), (int)R * 2, Theme.S(34)), Theme.Text,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, "dosya", small, new Rectangle(cx - (int)R, cy + Theme.S(12), (int)R * 2, Theme.S(20)), Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+
+                Center(g, "Dosyalar siliniyor…", title, Theme.Text, Theme.S(200), Theme.S(32));
+                Center(g, current, body, Theme.Muted, Theme.S(232), Theme.S(22));
+                int y = Theme.S(268);
+                for (int i = 0; i < recent.Count; i++)
+                {
+                    Color fg = Gfx.Mix(Theme.Text, Theme.Card, i * 0.24f);
+                    Color gc = Gfx.Mix(recentOk[i] ? Theme.Success : Theme.Danger, Theme.Card, i * 0.24f);
+                    int left = Theme.S(70);
+                    Gfx.Glyph(g, recentOk[i] ? "" : "", 9f, gc, new Rectangle(left, y, Theme.S(20), Theme.S(24)));
+                    TextRenderer.DrawText(g, recent[i], body, new Rectangle(left + Theme.S(28), y, W - left * 2 - Theme.S(28), Theme.S(24)), fg,
+                        TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+                    y += Theme.S(25);
+                }
+                return;
+            }
+
+            // Tamamlandi: genisleyen halka + cizilen onay isareti
+            float pulse = (float)Math.Min(1, ms / 700);
+            if (pulse < 1)
+            {
+                float pr = R + th / 2 + pulse * Theme.S(28);
+                using (Pen pen = new Pen(Color.FromArgb((int)(140 * (1 - pulse)), doneColor), Theme.S(3)))
+                    g.DrawEllipse(pen, cx - pr, cy - pr, pr * 2, pr * 2);
+            }
+            float inner = R - th;
+            using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Card, doneColor, 0.16f * (float)Math.Min(1, ms / 300))))
+                g.FillEllipse(b, cx - inner, cy - inner, inner * 2, inner * 2);
+
+            float progress = (float)Math.Max(0, Math.Min(1, (ms - 150) / 450));
+            using (Pen pen = new Pen(doneColor, Theme.S(7)))
+            {
+                pen.StartCap = LineCap.Round; pen.EndCap = LineCap.Round; pen.LineJoin = LineJoin.Round;
+                float k = R * 0.55f;
+                if (failures.Length == 0)
+                {
+                    PointF p0 = new PointF(cx - 0.45f * k, cy + 0.02f * k);
+                    PointF p1 = new PointF(cx - 0.12f * k, cy + 0.36f * k);
+                    PointF p2 = new PointF(cx + 0.52f * k, cy - 0.34f * k);
+                    float l1 = Dist(p0, p1), l2 = Dist(p1, p2), d = progress * (l1 + l2);
+                    if (d > 0) g.DrawLine(pen, p0, Lerp(p0, p1, Math.Min(1, d / l1)));
+                    if (d > l1) g.DrawLine(pen, p1, Lerp(p1, p2, (d - l1) / l2));
+                }
+                else if (progress > 0)
+                {
+                    g.DrawLine(pen, cx, cy - 0.5f * k, cx, cy - 0.5f * k + progress * 0.62f * k);
+                    if (progress >= 1) using (SolidBrush b = new SolidBrush(doneColor)) g.FillEllipse(b, cx - Theme.S(4.5f), cy + 0.38f * k, Theme.S(9), Theme.S(9));
+                }
+            }
+
+            Center(g, doneTitle, title, Theme.Text, Theme.S(200), Theme.S(32));
+            Center(g, doneSub, body, Gfx.Mix(doneColor, Color.White, 0.35f), Theme.S(232), Theme.S(22));
+            int ny = Theme.S(268);
+            Gfx.Glyph(g, "", 10f, Theme.Muted, new Rectangle(Theme.S(40), ny, Theme.S(22), Theme.S(40)));
+            TextRenderer.DrawText(g, doneNote, small, new Rectangle(Theme.S(68), ny, W - Theme.S(108), Theme.S(40)), Theme.Muted,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+            int fy = ny + Theme.S(42);
+            for (int i = 0; i < failures.Length && i < 2; i++)
+            {
+                TextRenderer.DrawText(g, "• " + failures[i], small, new Rectangle(Theme.S(48), fy, W - Theme.S(96), Theme.S(20)), Theme.Warning,
+                    TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+                fy += Theme.S(20);
+            }
+        }
+
+        private static float Dist(PointF a, PointF b) { return (float)Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)); }
+        private static PointF Lerp(PointF a, PointF b, float t) { return new PointF(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t); }
+    }
 }

@@ -1,25 +1,17 @@
-# System files
-.system/cleanup.log
-.system/config.json
-.system/protected-files.json
-
-# Windows
-Thumbs.db
-desktop.ini
-
-# User files (everything except system files)
+# Bu depo kullanicinin short-term-files klasorunun icinde yasar:
+# her seyi yok say, yalnizca uygulama dosyalarina izin ver.
 *
 !.gitignore
-!LICENSE
-!README.md
-!CHANGELOG.md
-!MainApp.ps1
+!Dosya Temizleyici.exe
+!.github/
+!.github/**
 !.system/
-!.system/Core.ps1
-!.system/UiKit.cs
-!.system/Launcher.cs
-!.system/ShortTermFileCleaner.ps1
-!.system/Install.ps1
-!.system/Uninstall.ps1
-!screenshots/
-!screenshots/*.png
+!.system/**
+
+# Kullaniciya ozel veriler ve uretilen dosyalar
+.system/config.json
+.system/protected-files.json
+.system/*.log
+.system/Launcher.exe
+desktop.ini
+Thumbs.db
