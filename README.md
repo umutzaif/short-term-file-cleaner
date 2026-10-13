@@ -5,43 +5,44 @@
 [![Platform](https://img.shields.io/badge/platform-Windows-blue.svg)](https://www.microsoft.com/windows)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-blue.svg)](https://docs.microsoft.com/powershell/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.0.0-orange.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.0.0-orange.svg)](CHANGELOG.md)
 
-Masaüstünüzde biriken geçici dosyalardan kurtulun! Bu uygulama, belirlediğiniz süre sonunda dosyalarınızı otomatik olarak temizler. Kod yazmaya gerek yok, sadece kurulum yapın ve kullanmaya başlayın.
+Masaüstünüzde biriken geçici dosyalardan kurtulun! Bu uygulama `Desktop\short-term-files` klasörüne bıraktığınız dosyaları takip eder; süresi yaklaşanları size sorar, süresi dolanları otomatik olarak temizler. Kod yazmaya gerek yok, sadece kurulum yapın ve kullanmaya başlayın.
+
+![Genel Bakış](screenshots/genel-bakis.png)
 
 ---
 
 ## ✨ Özellikler
 
 ### 🎯 Temel Özellikler
-- **Otomatik Temizlik**: Bilgisayar her açıldığında arka planda çalışır
-- **Akıllı İki Aşamalı Sistem**: Önce uyarı, sonra otomatik silme
+- **Sessiz Otomatik Başlatma**: Oturum açıldığında arka planda, **hiçbir PowerShell penceresi açmadan** çalışır
+- **Akıllı İki Aşamalı Sistem**: Önce inceleme, sonra otomatik silme
 - **Dosya Koruma**: Önemli dosyalarınızı kalıcı olarak koruyun
+- **Geri Dönüşüm Kutusu Desteği**: İsterseniz dosyalar kalıcı silinmek yerine Geri Dönüşüm Kutusu'na gider
 - **Boş Klasör Temizliği**: Dosyalarla birlikte boş klasörler de silinir
 - **Sıfır Bağımlılık**: Sadece Windows yerleşik araçları kullanır
 
-### 🖥️ Kullanıcı Dostu Arayüz
-- **Modern GUI**: 5 tab'lı profesyonel arayüz
-- **Tek Tıkla Kurulum**: Otomatik Task Scheduler entegrasyonu
-- **Görsel Durum Takibi**: Anlık durum bilgisi
-- **Kolay Ayarlar**: Gün sayılarını kolayca değiştirin
-- **Log Görüntüleyici**: Tüm işlemleri takip edin
-
-### ⚙️ Gelişmiş Özellikler
-- **Özelleştirilebilir Süreler**: Uyarı ve silme günlerini kendiniz belirleyin
-- **Checkbox Seçimi**: Hangi dosyaların silineceğini seçin
-- **Recursive Tarama**: Tüm alt klasörleri otomatik tarar
-- **Minimal Kaynak**: ~5-10MB RAM kullanımı
+### 🖥️ Modern Arayüz (v3)
+- **Koyu tema**, kenar çubuğu menüsü, istatistik kartları ve dosya yaşam döngüsü grafiği
+- **Tek uygulama**: Açılışta çıkan inceleme ekranından Genel Bakış, Korunanlar, Ayarlar ve Geçmiş'e doğrudan geçilebilir
+- **Dosya türü rozetleri**, kalan gün göstergesi, satıra tıklayarak seçim, çift tıklayarak klasörde gösterme
+- **Yüksek DPI desteği**: %125 / %150 ölçeklemede net görüntü
+- **Başlat menüsü kısayolu** ile uygulamaya her zaman ulaşın
 
 ---
 
 ## 📸 Ekran Görüntüleri
 
-### Ana Sayfa
-Modern, temiz arayüz ile durum bilgisi ve hızlı işlemler
+### İnceleme
+Uyarı süresini geçen dosyaları seçin ve **Sil**, **Koru** ya da **Atla**. Oturum açılışında yalnızca incelenecek dosya varsa bu ekran açılır; soldaki menüden diğer tüm sayfalara geçebilirsiniz.
 
-### Temizlik Penceresi
-Checkbox'larla dosya seçimi ve 3 işlem seçeneği: Sil, Atla, Koru
+![İnceleme](screenshots/inceleme.png)
+
+### Ayarlar
+Uyarı ve otomatik silme sürelerini ayarlayın, Geri Dönüşüm Kutusu kullanımını açıp kapatın.
+
+![Ayarlar](screenshots/ayarlar.png)
 
 ---
 
@@ -49,31 +50,29 @@ Checkbox'larla dosya seçimi ve 3 işlem seçeneği: Sil, Atla, Koru
 
 ### Gereksinimler
 - Windows 10/11
-- PowerShell 5.1+ (yerleşik)
+- Windows PowerShell 5.1 (yerleşik)
 
 ### Kurulum Adımları
 
 #### 1️⃣ Projeyi İndirin
+Masaüstünde `short-term-files` adıyla klonlayın (veya ZIP'i bu ada çıkartın):
 ```bash
-# Git ile
-git clone https://github.com/umutzaif/short-term-file-cleaner.git
-
-# veya ZIP olarak indirip çıkartın
+cd %USERPROFILE%\Desktop
+git clone https://github.com/umutzaif/short-term-file-cleaner.git short-term-files
 ```
 
 #### 2️⃣ Ana Uygulamayı Çalıştırın
-- `MainApp.ps1` dosyasına **sağ tıklayın**
-- **"Run with PowerShell"** seçeneğini seçin
+- `MainApp.ps1` dosyasına **sağ tıklayın** → **"Run with PowerShell"**
 
 > **Not**: İlk çalıştırmada PowerShell execution policy uyarısı alabilirsiniz. Bu durumda:
 > ```powershell
 > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 > ```
 
-#### 3️⃣ Kurulum Yapın
-- Ana Sayfa tab'inde **"Kurulum Yap"** butonuna tıklayın
-- Otomatik görev oluşturulacak
-- Artık bilgisayar her açıldığında otomatik çalışacak! ✅
+#### 3️⃣ Otomatik Başlatmayı Kurun
+- **Genel Bakış** sayfasındaki **Otomatik başlatma** kartında **"Otomatik başlatmayı kur"** butonuna tıklayın
+- Sessiz başlatıcı (`Launcher.exe`) derlenir, oturum açılışı görevi ve Başlat menüsü kısayolu oluşturulur
+- Bundan sonra uygulamayı **Başlat menüsü → Kısa Süreli Dosya Temizleyici** ile pencere olmadan açabilirsiniz ✅
 
 #### 4️⃣ Kullanmaya Başlayın
 - Geçici dosyalarınızı `Desktop\short-term-files` klasörüne atın
@@ -84,124 +83,71 @@ git clone https://github.com/umutzaif/short-term-file-cleaner.git
 
 ## 📖 Kullanım Kılavuzu
 
-### Temel Kullanım
-
-1. **Dosyaları Atın**
-   - `C:\Users\[KullanıcıAdı]\Desktop\short-term-files` klasörüne geçici dosyalarınızı atın
-   - Alt klasörler oluşturabilirsiniz (örn: `projeler`, `indirilenler`, `temp`)
-
-2. **Otomatik Çalışma**
-   - Bilgisayar her açıldığında arka planda çalışır
-   - Eski dosyaları kontrol eder
-   - Gerekirse uyarı penceresi açar
-
 ### İki Aşamalı Temizlik Sistemi
 
 #### 📅 Varsayılan Ayarlar
 - **Uyarı Süresi**: 7 gün
 - **Otomatik Silme**: 14 gün
 
-#### 🔄 Nasıl Çalışır?
-
 | Dosya Yaşı | Ne Olur? |
 |-----------|----------|
 | 0-6 gün | Hiçbir şey olmaz |
-| 7-13 gün | Uyarı penceresi açılır (Sil/Atla/Koru seçenekleri) |
-| 14+ gün | Otomatik silinir (korunmadıysa) |
+| 7-13 gün | Oturum açılışında İnceleme ekranı açılır (Sil / Koru / Atla) |
+| 14+ gün | Oturum açılışında otomatik silinir (korunmadıysa) |
 
-#### 💡 Örnek Senaryo
-```
-📁 rapor.pdf (5 gün önce) → Beklemede
-📁 sunum.pptx (10 gün önce) → Uyarı penceresi açılır
-📁 eski_dosya.zip (20 gün önce) → Otomatik silinir
-🛡️ önemli.docx (30 gün önce, korumalı) → Silinmez
-```
+> **Dosya yaşı** nasıl hesaplanır? Dosyanın oluşturulma ve son değiştirilme tarihlerinden **yenisi** esas alınır. Böylece klasöre kopyaladığınız eski bir dosya hemen "süresi dolmuş" sayılıp silinmez.
 
-### Uyarı Penceresi Kullanımı
+### İnceleme Ekranı
 
-Uyarı penceresi açıldığında 3 seçeneğiniz var:
+| Buton | Ne Yapar? |
+|-------|-----------|
+| 🗑️ **Sil** | Seçili dosyaları onay sonrası siler (ayara göre kalıcı ya da Geri Dönüşüm Kutusu'na) |
+| 🛡️ **Koru** | Seçili dosyaları kalıcı korumaya alır; otomatik silinmezler |
+| ⏭️ **Atla** | Şimdilik hiçbir şey yapmaz; dosyalar sonraki açılışta tekrar sorulur |
+| ✔️ **Tümünü seç** | Tüm satırları seçer / seçimi kaldırır (başlıktaki onay kutusu da aynı işi yapar) |
 
-#### 🗑️ Sil
-- Seçili dosyaları hemen siler
-- Checkbox'larla hangi dosyaların silineceğini seçin
-- Boş kalan klasörler de otomatik silinir
+- **Uyarıdakiler / Tüm dosyalar** sekmeleriyle yalnızca inceleme bekleyenleri ya da klasördeki tüm dosyaları görebilirsiniz
+- Bir satıra **çift tıklayarak** dosyayı Gezgin'de gösterebilirsiniz
 
-#### ⏭️ Atla
-- Hiçbir şey yapmaz
-- Dosyalar otomatik silme gününe kadar bekler
-- Sonraki çalıştırmada tekrar uyarı alırsınız
+### Sayfalar
 
-#### 🛡️ Koru
-- Seçili dosyaları **kalıcı korumaya** alır
-- Otomatik silme günü dolsa bile silinmez
-- MainApp'ten korumayı kaldırabilirsiniz
-
-### MainApp.ps1 Kullanımı
-
-#### Tab 1: Ana Sayfa
-- **Durum Bilgisi**: Kurulum durumu, sonraki çalışma zamanı
-- **Hızlı İşlemler**:
-  - `Kurulum Yap`: Otomatik görevi oluştur
-  - `Kaldır`: Otomatik görevi kaldır
-  - `Şimdi Temizle`: Manuel temizlik başlat
-  - `Klasörü Aç`: Hedef klasörü Explorer'da aç
-
-#### Tab 2: Ayarlar
-- **Uyarı Gün Sayısı**: Kaç gün sonra uyarı verileceği
-- **Otomatik Silme Gün Sayısı**: Kaç gün sonra otomatik silineceği
-- **Kaydet**: Ayarları kaydet
-
-> ⚠️ **Önemli**: Otomatik silme günü, uyarı gününden büyük olmalıdır!
-
-#### Tab 3: Korunan Dosyalar
-- Korumalı dosyaların listesi
-- `Korumayı Kaldır`: Seçili dosyanın korumasını kaldır
-- `Yenile`: Listeyi güncelle
-
-#### Tab 4: Log
-- Tüm işlemlerin geçmişi
-- `Yenile`: Log'u güncelle
-- `Dosyayı Aç`: Log dosyasını Notepad'de aç
-
-#### Tab 5: Hakkında
-- Versiyon bilgisi
-- GitHub linki
-- Lisans bilgisi
+| Sayfa | İçerik |
+|-------|--------|
+| **Genel Bakış** | Toplam / inceleme bekleyen / yakında silinecek / korunan dosya sayıları, yaşam döngüsü grafiği, yaklaşan silmeler, otomatik başlatma durumu, **Şimdi Temizle** ve **Klasörü Aç** |
+| **İnceleme** | Sil / Koru / Atla ekranı |
+| **Korunanlar** | Korunan dosyalar; **Dosya Ekle**, **Korumayı Kaldır**, **Eksikleri Temizle** |
+| **Ayarlar** | Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği |
+| **Geçmiş** | Renklendirilmiş işlem günlüğü |
+| **Hakkında** | Sürüm, nasıl çalışır, GitHub bağlantıları |
 
 ---
 
 ## ⚙️ Gelişmiş Yapılandırma
 
-### Ayarları Değiştirme
-
-#### GUI ile (Önerilen)
-1. `MainApp.ps1`'i çalıştırın
-2. **Ayarlar** tab'ine gidin
-3. Gün sayılarını değiştirin
-4. **Kaydet** butonuna tıklayın
-
-#### Manuel (config.json)
+### Manuel (config.json)
 ```json
 {
   "warningDays": 7,
   "deletionDays": 14,
-  "lastModified": "2026-02-04T20:00:00+03:00"
+  "useRecycleBin": false,
+  "lastModified": "2026-10-13T20:00:00+03:00"
 }
 ```
 
 Dosya konumu: `Desktop\short-term-files\.system\config.json`
 
-### Dosya Koruma Sistemi
+### Komut satırı
+```powershell
+# Paneli açar
+.\MainApp.ps1
 
-#### Korumaya Alma
-1. Temizlik penceresinde dosyayı seçin
-2. **Koru** butonuna tıklayın
-3. Dosya `protected-files.json`'a eklenir
+# Oturum açılışı modunu elle çalıştırır (süresi dolanları siler, gerekiyorsa İnceleme'yi açar)
+.\MainApp.ps1 -Startup
 
-#### Korumayı Kaldırma
-1. `MainApp.ps1` → **Korunan Dosyalar** tab'i
-2. Dosyayı seçin
-3. **Korumayı Kaldır** butonuna tıklayın
+# Otomatik başlatmayı kur / kaldır
+.\.system\Install.ps1
+.\.system\Uninstall.ps1
+```
 
 ---
 
@@ -210,25 +156,21 @@ Dosya konumu: `Desktop\short-term-files\.system\config.json`
 ```
 Desktop\short-term-files\
 │
-├── MainApp.ps1              # 🎯 ANA UYGULAMA (BU DOSYAYI ÇALIŞTIRIN)
-├── README.md
-├── LICENSE
-├── CHANGELOG.md
-├── .gitignore
+├── MainApp.ps1              # 🎯 ANA UYGULAMA
+├── README.md / LICENSE / CHANGELOG.md
+├── screenshots\             # README görselleri
 │
-├── .system\                 # ⚙️ Sistem klasörü (DOKUNMAYIN)
-│   ├── ShortTermFileCleaner.ps1    # Temizlik betiği
-│   ├── ConfigEditor.ps1            # Ayar editörü
-│   ├── Install.ps1                 # Kurulum betiği
-│   ├── Uninstall.ps1               # Kaldırma betiği
+├── .system\                 # ⚙️ Sistem klasörü (taramaya dahil edilmez)
+│   ├── Core.ps1                    # Ortak çekirdek: tarama, silme, koruma, görev kurulumu
+│   ├── UiKit.cs                    # Modern arayüz kontrolleri (ilk açılışta derlenir)
+│   ├── Launcher.cs                 # Sessiz başlatıcı kaynağı → Launcher.exe
+│   ├── ShortTermFileCleaner.ps1    # Eski görev tanımları için uyumluluk girişi
+│   ├── Install.ps1 / Uninstall.ps1 # Komut satırından kurulum / kaldırma
 │   ├── config.json                 # Yapılandırma
 │   ├── protected-files.json        # Korunan dosyalar
 │   └── cleanup.log                 # İşlem geçmişi
 │
-└── [Kullanıcı Klasörleri]   # 📁 Geçici dosyalarınızı buraya atın
-    ├── projeler\
-    ├── indirilenler\
-    └── temp\
+└── [Kullanıcı Dosyaları]    # 📁 Geçici dosyalarınızı buraya atın
 ```
 
 ---
@@ -237,72 +179,37 @@ Desktop\short-term-files\
 
 | Özellik | Detay |
 |---------|-------|
-| **Dil** | PowerShell 5.1+ |
-| **GUI Framework** | Windows Forms (.NET Framework) |
-| **Zamanlama** | Windows Task Scheduler |
-| **Bellek Kullanımı** | ~5-10MB |
-| **Tarama Modu** | Recursive (tüm alt klasörler) |
-| **Hariç Tutulan** | `.system` klasörü, `.ps1` dosyaları, `README.md` |
+| **Dil** | PowerShell 5.1 + C# (çalışma anında derlenen UI kiti) |
+| **GUI** | Windows Forms, özel çizimli koyu tema, DWM koyu başlık çubuğu |
+| **Zamanlama** | Windows Görev Zamanlayıcı (oturum açılışı + 20 sn gecikme) |
+| **Sessiz başlatma** | `Launcher.exe` PowerShell'i `CREATE_NO_WINDOW` ile başlatır; konsol penceresi oluşmaz |
+| **Tarama** | Recursive; gizli/sistem öğeleri ve bağlantı noktaları (junction) atlanır |
+| **Hariç tutulan** | `.system`, `.git`, kökteki uygulama dosyaları, tüm `.ps1` ve `README.md` dosyaları |
 | **Encoding** | UTF-8 |
 
 ### Çalışma Prensibi
 
-1. **Başlangıç**: Bilgisayar açıldığında Task Scheduler tetiklenir
-2. **Tarama**: Tüm alt klasörler recursive olarak taranır
-3. **Kontrol**: Dosya yaşları config'e göre kontrol edilir
-4. **Otomatik Silme**: Çok eski dosyalar (14+ gün) otomatik silinir
-5. **Uyarı**: Eski dosyalar (7-13 gün) için GUI açılır
-6. **Kullanıcı Seçimi**: Sil/Atla/Koru seçenekleri sunulur
-7. **Temizlik**: Boş klasörler otomatik silinir
-8. **Log**: Tüm işlemler log'a kaydedilir
+1. **Başlangıç**: Oturum açıldığında Görev Zamanlayıcı `Launcher.exe /startup` komutunu çalıştırır
+2. **Otomatik silme**: Otomatik silme süresini aşan, korunmayan dosyalar silinir
+3. **Kontrol**: Uyarı süresini aşan dosya yoksa uygulama hiçbir pencere açmadan kapanır
+4. **İnceleme**: Varsa uygulama İnceleme sayfasıyla açılır; diğer sayfalara menüden geçilebilir
+5. **Temizlik**: Boş kalan klasörler silinir, tüm işlemler log'a yazılır
 
 ---
 
 ## 🐛 Sorun Giderme
 
-### Uygulama çalışmıyor
-
-**PowerShell Execution Policy Hatası**
-```powershell
-# Çözüm:
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-**Görev çalışmıyor**
-1. Task Scheduler'ı açın (`Win + R` → `taskschd.msc`)
-2. "ShortTermFileCleaner" görevini bulun
-3. Sağ tıklayıp "Çalıştır" seçin
-4. Hata varsa "Geçmiş" tab'inde kontrol edin
-
-### Manuel test
-
-```powershell
-# Temizlik betiğini manuel çalıştır
-cd "$env:USERPROFILE\Desktop\short-term-files\.system"
-.\ShortTermFileCleaner.ps1
-```
-
-### Log kontrolü
-
-```powershell
-# Log dosyasını görüntüle
-notepad "$env:USERPROFILE\Desktop\short-term-files\.system\cleanup.log"
-```
-
-### Sık Karşılaşılan Sorunlar
-
 | Sorun | Çözüm |
 |-------|-------|
-| MainApp açılmıyor | PowerShell execution policy ayarlayın |
-| Görev çalışmıyor | Task Scheduler'da kontrol edin |
-| Dosyalar silinmiyor | Log dosyasını kontrol edin |
-| Uyarı penceresi açılmıyor | Dosya yaşlarını kontrol edin |
+| MainApp açılmıyor | PowerShell execution policy ayarlayın (yukarıya bakın) |
+| Açılışta PowerShell penceresi görünüyor | Genel Bakış → Otomatik başlatma kartında **Sessiz moda güncelle**'ye tıklayın |
+| "Erişim engellendi" hatası | Eski görev yönetici olarak oluşturulmuş olabilir; butona tıklayınca tek seferlik yönetici onayı istenir |
+| Dosyalar silinmiyor | **Geçmiş** sayfasındaki "Silme hatasi" satırlarını kontrol edin (dosya başka bir programda açık olabilir) |
+| İnceleme ekranı açılmıyor | Dosya yaşlarını **İnceleme → Tüm dosyalar** sekmesinden kontrol edin |
 
 ---
 
 ## 🤝 Katkıda Bulunma
-
-Katkılarınızı bekliyoruz! Lütfen:
 
 1. Fork edin
 2. Feature branch oluşturun (`git checkout -b feature/harika-ozellik`)
@@ -312,10 +219,9 @@ Katkılarınızı bekliyoruz! Lütfen:
 
 ### Geliştirme Fikirleri
 - [ ] Farklı klasörler için farklı süreler
-- [ ] E-posta bildirimleri
 - [ ] Dosya türüne göre filtreleme
 - [ ] İstatistik ve raporlama
-- [ ] Sistem tray ikonu
+- [ ] Sistem tepsisi ikonu
 
 ---
 
@@ -323,53 +229,22 @@ Katkılarınızı bekliyoruz! Lütfen:
 
 Bu proje MIT lisansı altında lisanslanmıştır. Detaylar için [LICENSE](LICENSE) dosyasına bakın.
 
-**Özet**: Kişisel ve ticari kullanım için özgürce kullanabilir, değiştirebilir ve dağıtabilirsiniz.
-
----
-
-## 🙏 Teşekkürler
-
-- Windows Forms ve PowerShell topluluğuna
-- Tüm katkıda bulunanlara
-- Geri bildirim sağlayan kullanıcılara
-
 ---
 
 ## 📞 İletişim
 
 - **GitHub**: [@umutzaif](https://github.com/umutzaif)
 - **Issues**: [Sorun bildirin](https://github.com/umutzaif/short-term-file-cleaner/issues)
-- **Discussions**: [Tartışmalara katılın](https://github.com/umutzaif/short-term-file-cleaner/discussions)
 
 ---
 
 ## 📊 Sürüm Geçmişi
 
-### v2.0.0 (2026-02-04)
-- ✨ Ana GUI uygulaması (MainApp.ps1)
-- ✨ Gelişmiş yapılandırma sistemi
-- ✨ Dosya koruma sistemi
-- ✨ İki aşamalı silme
-- ✨ Boş klasör temizliği
-- ✨ Checkbox'lı dosya seçimi
-- 🎨 Modern profesyonel tasarım
-- 🐛 Türkçe karakter düzeltmeleri
+Ayrıntılar için [CHANGELOG.md](CHANGELOG.md).
 
-### v1.0.0 (2026-02-03)
-- 🎉 İlk sürüm
-- ⚡ Temel temizlik özelliği
-- 📁 Recursive tarama
-- ⏰ Task Scheduler entegrasyonu
-
----
-
-## ⭐ Yıldız Verin!
-
-Bu projeyi beğendiyseniz, lütfen GitHub'da ⭐ vererek destek olun!
-
----
-
-**Not**: Sadece Windows işletim sisteminde çalışır. macOS ve Linux desteği planlanmamaktadır.
+- **v3.0.0** — Yeni koyu tema arayüz, sessiz başlatma, Sil butonu düzeltmesi, birleşik uygulama
+- **v2.0.0** — Ana GUI uygulaması, yapılandırma ve koruma sistemi
+- **v1.0.0** — İlk sürüm
 
 ---
 

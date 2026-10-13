@@ -1,672 +1,1024 @@
-﻿# Kısa Süreli Dosya Temizleyici v2.0
-# Ana GUI Uygulaması - Profesyonel Tasarım
-# GitHub: https://github.com/[username]/short-term-file-cleaner
+﻿# Kısa Süreli Dosya Temizleyici v3.0
+# Ana uygulama: Genel Bakış, İnceleme (Sil / Koru / Atla), Korunanlar, Ayarlar, Geçmiş, Hakkında
+# GitHub: https://github.com/umutzaif/short-term-file-cleaner
+#
+#   MainApp.ps1            -> Genel Bakış ile açılır
+#   MainApp.ps1 -Startup   -> Oturum açılışı modu: süresi dolanları siler; incelenecek dosya varsa
+#                             İnceleme sayfasıyla açılır (tüm sayfalara erişilebilir), yoksa sessizce çıkar
+
+param([switch]$Startup)
+
+. (Join-Path $PSScriptRoot '.system\Core.ps1')
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-# Global değişkenler
-$script:baseFolder = "$env:USERPROFILE\Desktop\short-term-files"
-$script:systemFolder = "$baseFolder\.system"
-$script:configFile = "$systemFolder\config.json"
-$script:protectedFile = "$systemFolder\protected-files.json"
-$script:logFile = "$systemFolder\cleanup.log"
-$script:taskName = "ShortTermFileCleaner"
-
-# Renkler - Modern tema
-$script:colorPrimary = [System.Drawing.Color]::FromArgb(41, 128, 185)  # Mavi
-$script:colorSuccess = [System.Drawing.Color]::FromArgb(39, 174, 96)   # Yeşil
-$script:colorDanger = [System.Drawing.Color]::FromArgb(231, 76, 60)    # Kırmızı
-$script:colorWarning = [System.Drawing.Color]::FromArgb(243, 156, 18)  # Turuncu
-$script:colorLight = [System.Drawing.Color]::FromArgb(236, 240, 241)   # Açık gri
-$script:colorDark = [System.Drawing.Color]::FromArgb(44, 62, 80)       # Koyu gri
-$script:colorText = [System.Drawing.Color]::FromArgb(52, 73, 94)       # Metin
-
-# Helper fonksiyonlar
-function Get-Config {
-    if (Test-Path $script:configFile) {
-        try {
-            return Get-Content $script:configFile -Raw | ConvertFrom-Json
+# UI kitini derler; sonuç %LOCALAPPDATA% altında önbelleklenir, sonraki açılışlar anında olur.
+function Import-UiKit {
+    $source = Get-Content -LiteralPath (Join-Path $script:SystemFolder 'UiKit.cs') -Raw -Encoding UTF8
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    $hash = -join ($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($source))[0..5] | ForEach-Object { $_.ToString('x2') })
+    $cacheDir = Join-Path $env:LOCALAPPDATA 'ShortTermFileCleaner'
+    $dll = Join-Path $cacheDir "UiKit-$hash.dll"
+    try {
+        if (-not (Test-Path -LiteralPath $dll)) {
+            New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+            Get-ChildItem -LiteralPath $cacheDir -Filter 'UiKit-*.dll' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Add-Type -TypeDefinition $source -ReferencedAssemblies System.Windows.Forms, System.Drawing -OutputAssembly $dll -OutputType Library -ErrorAction Stop
         }
-        catch {
-            return @{ warningDays = 7; deletionDays = 14 }
+        Add-Type -Path $dll -ErrorAction Stop
+    }
+    catch {
+        if (-not ('StfcUi.Theme' -as [type])) {
+            Add-Type -TypeDefinition $source -ReferencedAssemblies System.Windows.Forms, System.Drawing
         }
     }
-    return @{ warningDays = 7; deletionDays = 14 }
 }
 
-function Set-Config {
-    param($config)
-    $config.lastModified = (Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz")
-    $config | ConvertTo-Json | Out-File $script:configFile -Encoding UTF8
-}
+Import-UiKit
+[StfcUi.Native]::HideOwnConsole()
+[StfcUi.Native]::EnableDpiAwareness()
+[System.Windows.Forms.Application]::EnableVisualStyles()
 
-function Get-ProtectedFiles {
-    if (Test-Path $script:protectedFile) {
-        try {
-            $protected = Get-Content $script:protectedFile -Raw | ConvertFrom-Json
-            return $protected.files
-        }
-        catch {
-            return @()
-        }
+#region Tek örnek
+$script:AppTitle = 'Kısa Süreli Dosya Temizleyici'
+$createdNew = $false
+$script:InstanceMutex = New-Object System.Threading.Mutex($true, 'Local\ShortTermFileCleaner.UI', [ref]$createdNew)
+if (-not $createdNew) {
+    [void][StfcUi.Native]::ActivateWindow($script:AppTitle)
+    exit
+}
+#endregion
+
+#region Oturum açılışı taraması
+if ($Startup) {
+    Invoke-LogRotation
+    $cfg = Get-Config
+    Write-Log "Baslangic taramasi: Uyari=$($cfg.warningDays) gun, Silme=$($cfg.deletionDays) gun"
+    [void](Invoke-AutoCleanup -Config $cfg)
+    $pending = @(Get-ManagedFiles -Config $cfg | Where-Object { $_.Stage -eq 'warning' })
+    if ($pending.Count -eq 0) {
+        Write-Log 'Islem gerektiren dosya bulunamadi'
+        exit
     }
-    return @()
+    Write-Log "Uyari: $($pending.Count) dosya incelemeyi bekliyor"
+}
+#endregion
+
+#region Tema ve yardımcılar
+$screenDpi = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero).DpiX
+[StfcUi.Theme]::Scale = $screenDpi / 96
+$installedFonts = (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }
+if ($installedFonts -contains 'Segoe Fluent Icons') { [StfcUi.Theme]::IconFamily = 'Segoe Fluent Icons' }
+
+$C = @{
+    Bg = [StfcUi.Theme]::Bg; Side = [StfcUi.Theme]::Side; Card = [StfcUi.Theme]::Card; CardHi = [StfcUi.Theme]::CardHi
+    Border = [StfcUi.Theme]::Border; Text = [StfcUi.Theme]::Text; Muted = [StfcUi.Theme]::Muted
+    Accent = [StfcUi.Theme]::Accent; Accent2 = [StfcUi.Theme]::Accent2
+    Success = [StfcUi.Theme]::Success; Warning = [StfcUi.Theme]::Warning; Danger = [StfcUi.Theme]::Danger
 }
 
-function Test-TaskInstalled {
-    $task = Get-ScheduledTask -TaskName $script:taskName -ErrorAction SilentlyContinue
-    return $null -ne $task
+$G = @{}
+@{
+    Home = 0xE80F; Review = 0xE7BA; Shield = 0xEA18; Settings = 0xE713; History = 0xE81C; Info = 0xE946
+    Delete = 0xE74D; Folder = 0xE838; Refresh = 0xE72C; Skip = 0xE893; Add = 0xE710; Check = 0xE73E
+    Clock = 0xE823; Files = 0xE8B7; Broom = 0xE75C; Power = 0xE7E8; Link = 0xE71B; Open = 0xE8E5
+    Warn = 0xE7BA; Fire = 0xE945; Recycle = 0xE74D; Calendar = 0xE787; Bug = 0xEBE8; Clear = 0xE894
+}.GetEnumerator() | ForEach-Object { $G[$_.Key] = [string][char]$_.Value }
+
+function New-UiFont {
+    param([float]$Size, [string]$Family = 'Segoe UI', [string]$Style = 'Regular')
+    New-Object System.Drawing.Font($Family, $Size, [System.Drawing.FontStyle]$Style)
 }
 
-function Install-CleanupTask {
-    $scriptPath = "$script:systemFolder\ShortTermFileCleaner.ps1"
-    
-    if (-not (Test-Path $script:systemFolder)) {
-        New-Item -ItemType Directory -Path $script:systemFolder -Force | Out-Null
-    }
-    
-    if (-not (Test-Path $script:configFile)) {
-        @{ warningDays = 7; deletionDays = 14; lastModified = (Get-Date -Format "yyyy-MM-ddTHH:mm:sszzz") } | ConvertTo-Json | Out-File $script:configFile -Encoding UTF8
-    }
-    
-    if (-not (Test-Path $script:protectedFile)) {
-        @{ files = @() } | ConvertTo-Json | Out-File $script:protectedFile -Encoding UTF8
-    }
-    
-    $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$scriptPath`""
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-    
-    Register-ScheduledTask -TaskName $script:taskName -Description "Kısa süreli dosyaları otomatik temizler" -Action $action -Trigger $trigger -Settings $settings -User $env:USERNAME -RunLevel Limited -Force | Out-Null
-    
-    return $true
+function Add-Dock {
+    param($Parent, $Control, [string]$Dock = 'Top')
+    $Control.Dock = $Dock
+    $Parent.Controls.Add($Control)
+    $Control.BringToFront()
 }
 
-function Uninstall-CleanupTask {
-    if (Test-TaskInstalled) {
-        Unregister-ScheduledTask -TaskName $script:taskName -Confirm:$false
-        return $true
-    }
-    return $false
+function Add-Spacer {
+    param($Parent, [int]$Height = 16, [string]$Dock = 'Top')
+    $p = New-Object System.Windows.Forms.Panel
+    $p.Height = $Height
+    $p.Width = $Height
+    Add-Dock $Parent $p $Dock
 }
 
-# Ana form
-$mainForm = New-Object System.Windows.Forms.Form
-$mainForm.Text = "Kısa Süreli Dosya Temizleyici v2.0"
-$mainForm.Size = New-Object System.Drawing.Size(900, 650)
-$mainForm.StartPosition = "CenterScreen"
-$mainForm.FormBorderStyle = "FixedDialog"
-$mainForm.MaximizeBox = $false
-$mainForm.MinimizeBox = $true
-$mainForm.BackColor = [System.Drawing.Color]::White
-$mainForm.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+function New-Label {
+    param([string]$Text, $Font, $Color = $C.Text, [string]$Align = 'MiddleLeft')
+    $l = New-Object System.Windows.Forms.Label
+    $l.Text = $Text
+    $l.Font = $Font
+    $l.ForeColor = $Color
+    $l.BackColor = [System.Drawing.Color]::Transparent
+    $l.TextAlign = $Align
+    $l.AutoEllipsis = $true
+    $l
+}
 
-# TabControl
-$tabControl = New-Object System.Windows.Forms.TabControl
-$tabControl.Location = New-Object System.Drawing.Point(15, 15)
-$tabControl.Size = New-Object System.Drawing.Size(860, 550)
-$tabControl.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$mainForm.Controls.Add($tabControl)
+function New-Button {
+    param([string]$Text, [string]$Glyph = '', [string]$Kind = 'Solid', $Accent = $C.Accent, [int]$Width = 150, [int]$Height = 40, [scriptblock]$OnClick)
+    $b = New-Object StfcUi.ModernButton
+    $b.Text = $Text
+    $b.Glyph = $Glyph
+    $b.Kind = $Kind
+    $b.Accent = $Accent
+    $b.Size = New-Object System.Drawing.Size($Width, $Height)
+    $b.Margin = New-Object System.Windows.Forms.Padding(10, 0, 0, 0)
+    if ($OnClick) { $b.Add_Click($OnClick) }
+    $b
+}
 
-#region Tab 1: Ana Sayfa
-$tabHome = New-Object System.Windows.Forms.TabPage
-$tabHome.Text = "  Ana Sayfa  "
-$tabHome.BackColor = [System.Drawing.Color]::White
-$tabControl.Controls.Add($tabHome)
+function New-Card {
+    param([int]$Height = 100, [int]$Pad = 20)
+    $card = New-Object StfcUi.Card
+    $card.Height = $Height
+    $card.Padding = New-Object System.Windows.Forms.Padding($Pad)
+    $card
+}
 
-# Başlık paneli
-$pnlHeader = New-Object System.Windows.Forms.Panel
-$pnlHeader.Location = New-Object System.Drawing.Point(0, 0)
-$pnlHeader.Size = New-Object System.Drawing.Size(860, 120)
-$pnlHeader.BackColor = $script:colorPrimary
-$tabHome.Controls.Add($pnlHeader)
+function New-Grid {
+    $grid = New-Object StfcUi.DarkGrid
+    $grid.ScrollBars = 'Vertical'
+    $grid
+}
 
-$lblTitle = New-Object System.Windows.Forms.Label
-$lblTitle.Location = New-Object System.Drawing.Point(30, 25)
-$lblTitle.Size = New-Object System.Drawing.Size(800, 40)
-$lblTitle.Text = "Kısa Süreli Dosya Temizleyici"
-$lblTitle.Font = New-Object System.Drawing.Font("Segoe UI", 22, [System.Drawing.FontStyle]::Bold)
-$lblTitle.ForeColor = [System.Drawing.Color]::White
-$pnlHeader.Controls.Add($lblTitle)
+function Format-Size {
+    param([double]$Bytes)
+    if ($Bytes -ge 1GB) { return '{0:N1} GB' -f ($Bytes / 1GB) }
+    if ($Bytes -ge 1MB) { return '{0:N1} MB' -f ($Bytes / 1MB) }
+    if ($Bytes -ge 1KB) { return '{0:N0} KB' -f ($Bytes / 1KB) }
+    return "$([int]$Bytes) B"
+}
 
-$lblSubtitle = New-Object System.Windows.Forms.Label
-$lblSubtitle.Location = New-Object System.Drawing.Point(30, 70)
-$lblSubtitle.Size = New-Object System.Drawing.Size(800, 30)
-$lblSubtitle.Text = "Geçici dosyalarınızı otomatik olarak yönetin"
-$lblSubtitle.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$lblSubtitle.ForeColor = [System.Drawing.Color]::FromArgb(236, 240, 241)
-$pnlHeader.Controls.Add($lblSubtitle)
+function Format-Age {
+    param([double]$Days)
+    if ($Days -lt 1) { return 'Bugün' }
+    return '{0:N0} gün' -f [math]::Floor($Days)
+}
 
-# Durum kartı
-$pnlStatus = New-Object System.Windows.Forms.Panel
-$pnlStatus.Location = New-Object System.Drawing.Point(30, 140)
-$pnlStatus.Size = New-Object System.Drawing.Size(800, 140)
-$pnlStatus.BackColor = $script:colorLight
-$pnlStatus.BorderStyle = "None"
-$tabHome.Controls.Add($pnlStatus)
+function Get-LeftInfo {
+    param($File)
+    switch ($File.Stage) {
+        'protected' { return @('Korunuyor', $C.Success) }
+        'expired' { return @('Süresi doldu', $C.Danger) }
+    }
+    $d = [math]::Max(0, $File.DaysLeft)
+    $text = if ($d -le 0) { 'Bugün' } elseif ($d -eq 1) { 'Yarın' } else { "$d gün" }
+    $color = if ($File.Stage -eq 'fresh') { $C.Muted } elseif ($d -le 2) { $C.Danger } else { $C.Warning }
+    return @($text, $color)
+}
 
-$lblStatusTitle = New-Object System.Windows.Forms.Label
-$lblStatusTitle.Location = New-Object System.Drawing.Point(20, 15)
-$lblStatusTitle.Size = New-Object System.Drawing.Size(760, 30)
-$lblStatusTitle.Text = "📊 Durum Bilgisi"
-$lblStatusTitle.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
-$lblStatusTitle.ForeColor = $script:colorDark
-$pnlStatus.Controls.Add($lblStatusTitle)
+function Open-InExplorer {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) { Start-Process explorer.exe -ArgumentList "/select,`"$Path`"" }
+}
+#endregion
 
-$lblTaskStatus = New-Object System.Windows.Forms.Label
-$lblTaskStatus.Location = New-Object System.Drawing.Point(25, 55)
-$lblTaskStatus.Size = New-Object System.Drawing.Size(750, 25)
-$lblTaskStatus.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$lblTaskStatus.ForeColor = $script:colorText
-$pnlStatus.Controls.Add($lblTaskStatus)
+#region Ana pencere
+$form = New-Object System.Windows.Forms.Form
+$form.Text = $script:AppTitle
+$form.AutoScaleMode = 'None'
+$form.ClientSize = New-Object System.Drawing.Size(1180, 740)
+$form.StartPosition = 'CenterScreen'
+$form.BackColor = $C.Bg
+$form.ForeColor = $C.Text
+$form.Font = New-UiFont 9.5
+$form.Icon = [StfcUi.Gfx]::GlyphIcon($G.Broom, $C.Accent, $C.Accent2)
+$form.Add_HandleCreated({ [StfcUi.Native]::StyleWindow($form.Handle, $C.Side) })
 
-$lblNextRun = New-Object System.Windows.Forms.Label
-$lblNextRun.Location = New-Object System.Drawing.Point(25, 80)
-$lblNextRun.Size = New-Object System.Drawing.Size(750, 25)
-$lblNextRun.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$lblNextRun.ForeColor = $script:colorText
-$pnlStatus.Controls.Add($lblNextRun)
+# Kenar çubuğu
+$side = New-Object System.Windows.Forms.Panel
+$side.Width = 240
+$side.BackColor = $C.Side
+$side.Padding = New-Object System.Windows.Forms.Padding(14, 20, 14, 18)
+Add-Dock $form $side 'Left'
 
-$lblProtectedCount = New-Object System.Windows.Forms.Label
-$lblProtectedCount.Location = New-Object System.Drawing.Point(25, 105)
-$lblProtectedCount.Size = New-Object System.Drawing.Size(750, 25)
-$lblProtectedCount.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$lblProtectedCount.ForeColor = $script:colorText
-$pnlStatus.Controls.Add($lblProtectedCount)
+$divider = New-Object System.Windows.Forms.Panel
+$divider.Width = 1
+$divider.BackColor = $C.Border
+Add-Dock $form $divider 'Left'
 
-# Hızlı işlemler kartı
-$pnlActions = New-Object System.Windows.Forms.Panel
-$pnlActions.Location = New-Object System.Drawing.Point(30, 300)
-$pnlActions.Size = New-Object System.Drawing.Size(800, 200)
-$pnlActions.BackColor = $script:colorLight
-$tabHome.Controls.Add($pnlActions)
+$content = New-Object System.Windows.Forms.Panel
+$content.BackColor = $C.Bg
+$content.Padding = New-Object System.Windows.Forms.Padding(36, 28, 36, 26)
+Add-Dock $form $content 'Fill'
 
-$lblActionsTitle = New-Object System.Windows.Forms.Label
-$lblActionsTitle.Location = New-Object System.Drawing.Point(20, 15)
-$lblActionsTitle.Size = New-Object System.Drawing.Size(760, 30)
-$lblActionsTitle.Text = "⚡ Hızlı İşlemler"
-$lblActionsTitle.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
-$lblActionsTitle.ForeColor = $script:colorDark
-$pnlActions.Controls.Add($lblActionsTitle)
+# Marka alanı
+$brand = New-Object System.Windows.Forms.Panel
+$brand.Height = 64
+Add-Dock $side $brand 'Top'
 
-# Kurulum butonu
-$btnInstall = New-Object System.Windows.Forms.Button
-$btnInstall.Location = New-Object System.Drawing.Point(40, 60)
-$btnInstall.Size = New-Object System.Drawing.Size(180, 50)
-$btnInstall.Text = "✓ Kurulum Yap"
-$btnInstall.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$btnInstall.BackColor = $script:colorSuccess
-$btnInstall.ForeColor = [System.Drawing.Color]::White
-$btnInstall.FlatStyle = "Flat"
-$btnInstall.FlatAppearance.BorderSize = 0
-$btnInstall.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnInstall.Add_Click({
-        try {
-            if (Install-CleanupTask) {
-                [System.Windows.Forms.MessageBox]::Show("Kurulum başarıyla tamamlandı!`n`nUygulama artık bilgisayar her açıldığında otomatik çalışacak.", "Başarılı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-                Update-StatusInfo
+$logo = New-Object StfcUi.Card
+$logo.SetBounds(4, 6, 46, 46)
+$logo.Radius = 13
+$logo.Fill = $C.Accent
+$logo.Fill2 = $C.Accent2
+$logo.BorderColor = [System.Drawing.Color]::Transparent
+$logo.Padding = New-Object System.Windows.Forms.Padding(0)
+$brand.Controls.Add($logo)
+$logoGlyph = New-Label $G.Broom (New-UiFont 15 ([StfcUi.Theme]::IconFamily)) ([System.Drawing.Color]::White) 'MiddleCenter'
+$logoGlyph.Dock = 'Fill'
+$logo.Controls.Add($logoGlyph)
+
+$brandTitle = New-Label 'Kısa Süreli' (New-UiFont 11.5 'Segoe UI Semibold')
+$brandTitle.SetBounds(60, 6, 160, 24)
+$brand.Controls.Add($brandTitle)
+$brandSub = New-Label 'Dosya Temizleyici' (New-UiFont 9) $C.Muted
+$brandSub.SetBounds(60, 29, 160, 20)
+$brand.Controls.Add($brandSub)
+
+Add-Spacer $side 18
+$navCaption = New-Label 'MENÜ' (New-UiFont 8 'Segoe UI Semibold') $C.Muted
+$navCaption.Height = 26
+$navCaption.Padding = New-Object System.Windows.Forms.Padding(10, 0, 0, 0)
+Add-Dock $side $navCaption 'Top'
+
+$script:Pages = [ordered]@{}
+$script:NavItems = @{}
+$navDefs = @(
+    @('dash', 'Genel Bakış', $G.Home),
+    @('review', 'İnceleme', $G.Review),
+    @('protected', 'Korunanlar', $G.Shield),
+    @('settings', 'Ayarlar', $G.Settings),
+    @('log', 'Geçmiş', $G.History),
+    @('about', 'Hakkında', $G.Info)
+)
+foreach ($def in $navDefs) {
+    $nav = New-Object StfcUi.NavItem
+    $nav.Tag = $def[0]
+    $nav.Text = $def[1]
+    $nav.Glyph = $def[2]
+    $nav.Height = 44
+    $nav.Add_Click({ Show-Page $this.Tag })
+    Add-Dock $side $nav 'Top'
+    Add-Spacer $side 4
+    $script:NavItems[$def[0]] = $nav
+}
+
+# Kenar çubuğu alt kısmı: otomatik başlatma durumu
+$sideStatus = New-Card 74 14
+$sideStatus.Fill = [StfcUi.Gfx]::Mix($C.Side, [System.Drawing.Color]::White, 0.03)
+$sideStatus.Radius = 12
+Add-Dock $side $sideStatus 'Bottom'
+$sideVersion = New-Label "v$script:AppVersion" (New-UiFont 8.5) $C.Muted 'MiddleCenter'
+$sideVersion.Height = 30
+Add-Dock $side $sideVersion 'Bottom'
+$sideVersion.SendToBack()
+
+$sideDot = New-Label '●' (New-UiFont 10) $C.Muted 'MiddleCenter'
+$sideDot.SetBounds(10, 12, 20, 22)
+$sideStatus.Controls.Add($sideDot)
+$sideStatusTitle = New-Label 'Otomatik başlatma' (New-UiFont 9 'Segoe UI Semibold')
+$sideStatusTitle.SetBounds(32, 10, 160, 22)
+$sideStatus.Controls.Add($sideStatusTitle)
+$sideStatusText = New-Label 'Kontrol ediliyor…' (New-UiFont 8.5) $C.Muted
+$sideStatusText.SetBounds(32, 32, 170, 20)
+$sideStatus.Controls.Add($sideStatusText)
+
+# Bildirim (toast)
+$toast = New-Card 46 0
+$toast.Fill = $C.CardHi
+$toast.Radius = 12
+$toast.Visible = $false
+$toastGlyph = New-Label '' (New-UiFont 11 ([StfcUi.Theme]::IconFamily)) $C.Success 'MiddleCenter'
+$toastGlyph.SetBounds(10, 0, 30, 46)
+$toast.Controls.Add($toastGlyph)
+$toastText = New-Label '' (New-UiFont 9.75 'Segoe UI Semibold') $C.Text
+$toastText.SetBounds(42, 0, 400, 46)
+$toast.Controls.Add($toastText)
+$content.Controls.Add($toast)
+$toastTimer = New-Object System.Windows.Forms.Timer
+$toastTimer.Interval = 3200
+$toastTimer.Add_Tick({ $toastTimer.Stop(); $toast.Visible = $false })
+
+function Show-Toast {
+    param([string]$Message, $Color = $C.Success, [string]$Glyph = $G.Check)
+    $toastText.Text = $Message
+    $toastGlyph.Text = $Glyph
+    $toastGlyph.ForeColor = $Color
+    $toast.BorderColor = [StfcUi.Gfx]::Mix($C.CardHi, $Color, 0.5)
+    $w = [System.Windows.Forms.TextRenderer]::MeasureText($Message, $toastText.Font).Width
+    $toastText.Width = $w + 10
+    $toast.Width = $w + 70
+    $toast.Height = $toastText.Height
+    $toast.Left = [int](($content.ClientSize.Width - $toast.Width) / 2)
+    $toast.Top = $content.ClientSize.Height - $toast.Height - [StfcUi.Theme]::S(104)
+    $toast.Visible = $true
+    $toast.BringToFront()
+    $toastTimer.Stop()
+    $toastTimer.Start()
+}
+
+function New-Page {
+    param([string]$Name, [string]$Title, [string]$Subtitle)
+    $page = New-Object System.Windows.Forms.Panel
+    $page.Visible = $false
+    Add-Dock $content $page 'Fill'
+
+    $header = New-Object System.Windows.Forms.Panel
+    $header.Height = 66
+    Add-Dock $page $header 'Top'
+
+    $actions = New-Object System.Windows.Forms.FlowLayoutPanel
+    $actions.FlowDirection = 'RightToLeft'
+    $actions.WrapContents = $false
+    $actions.AutoSize = $true
+    $actions.AutoSizeMode = 'GrowAndShrink'
+    $actions.Padding = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
+    Add-Dock $header $actions 'Right'
+
+    $titles = New-Object System.Windows.Forms.Panel
+    Add-Dock $header $titles 'Fill'
+    $lblTitle = New-Label $Title (New-UiFont 20 'Segoe UI Semibold')
+    $lblTitle.Height = 38
+    $lblTitle.TextAlign = 'BottomLeft'
+    Add-Dock $titles $lblTitle 'Top'
+    $lblSub = New-Label $Subtitle (New-UiFont 10) $C.Muted 'TopLeft'
+    $lblSub.Height = 26
+    Add-Dock $titles $lblSub 'Top'
+
+    Add-Spacer $page 20
+    $script:Pages[$Name] = $page
+    @{ Page = $page; Actions = $actions; Subtitle = $lblSub; Title = $lblTitle }
+}
+
+function Show-Page {
+    param([string]$Name)
+    foreach ($key in @($script:Pages.Keys)) {
+        $script:Pages[$key].Visible = ($key -eq $Name)
+        $script:NavItems[$key].Active = ($key -eq $Name)
+    }
+    $script:CurrentPage = $Name
+    if ($Name -eq 'log') { Update-LogView }
+}
+#endregion
+
+#region Sayfa: Genel Bakış
+$dash = New-Page 'dash' 'Genel Bakış' 'short-term-files klasörünün anlık durumu'
+$dash.Actions.Controls.Add((New-Button 'Şimdi Temizle' $G.Broom 'Solid' $C.Accent 160 40 {
+            $cfg = Get-Config
+            Write-Log 'Manuel temizlik baslatildi'
+            $n = Invoke-AutoCleanup -Config $cfg
+            Update-All
+            $warn = @($script:Files | Where-Object { $_.Stage -eq 'warning' }).Count
+            if ($warn -gt 0) {
+                Show-Page 'review'
+                Show-Toast "$n dosyanın süresi dolmuştu ve silindi · $warn dosya incelemenizi bekliyor" $C.Warning $G.Review
             }
-        }
-        catch {
-            [System.Windows.Forms.MessageBox]::Show("Kurulum hatası: $($_.Exception.Message)", "Hata", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        }
-    })
-$pnlActions.Controls.Add($btnInstall)
+            else { Show-Toast "Temizlik tamamlandı · $n dosya silindi" }
+        }))
+$dash.Actions.Controls.Add((New-Button 'Klasörü Aç' $G.Folder 'Ghost' $C.Accent 140 40 {
+            Start-Process explorer.exe -ArgumentList "`"$script:BaseFolder`""
+        }))
 
-# Kaldır butonu
-$btnUninstall = New-Object System.Windows.Forms.Button
-$btnUninstall.Location = New-Object System.Drawing.Point(240, 60)
-$btnUninstall.Size = New-Object System.Drawing.Size(180, 50)
-$btnUninstall.Text = "✕ Kaldır"
-$btnUninstall.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnUninstall.BackColor = $script:colorDanger
-$btnUninstall.ForeColor = [System.Drawing.Color]::White
-$btnUninstall.FlatStyle = "Flat"
-$btnUninstall.FlatAppearance.BorderSize = 0
-$btnUninstall.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnUninstall.Add_Click({
-        $result = [System.Windows.Forms.MessageBox]::Show("Otomatik görev kaldırılıyor. Devam edilsin mi?", "Onay", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
-        if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-            if (Uninstall-CleanupTask) {
-                [System.Windows.Forms.MessageBox]::Show("Görev başarıyla kaldırıldı!", "Başarılı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-                Update-StatusInfo
-            }
-        }
-    })
-$pnlActions.Controls.Add($btnUninstall)
+$tiles = New-Object System.Windows.Forms.TableLayoutPanel
+$tiles.Height = 134
+$tiles.ColumnCount = 4
+$tiles.RowCount = 1
+for ($i = 0; $i -lt 4; $i++) { [void]$tiles.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 25))) }
+[void]$tiles.RowStyles.Add((New-Object System.Windows.Forms.RowStyle('Percent', 100)))
+Add-Dock $dash.Page $tiles 'Top'
 
-# Şimdi temizle butonu
-$btnCleanNow = New-Object System.Windows.Forms.Button
-$btnCleanNow.Location = New-Object System.Drawing.Point(440, 60)
-$btnCleanNow.Size = New-Object System.Drawing.Size(180, 50)
-$btnCleanNow.Text = "🗑️ Şimdi Temizle"
-$btnCleanNow.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$btnCleanNow.BackColor = $script:colorPrimary
-$btnCleanNow.ForeColor = [System.Drawing.Color]::White
-$btnCleanNow.FlatStyle = "Flat"
-$btnCleanNow.FlatAppearance.BorderSize = 0
-$btnCleanNow.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnCleanNow.Add_Click({
-        $scriptPath = "$script:systemFolder\ShortTermFileCleaner.ps1"
-        if (Test-Path $scriptPath) {
-            Start-Process powershell.exe -ArgumentList "-ExecutionPolicy Bypass -File `"$scriptPath`""
+function New-Tile {
+    param([string]$Title, [string]$Glyph, $Accent, [int]$Col)
+    $t = New-Object StfcUi.StatTile
+    $t.Title = $Title
+    $t.Glyph = $Glyph
+    $t.Accent = $Accent
+    $t.Dock = 'Fill'
+    $right = if ($Col -lt 3) { 16 } else { 0 }
+    $t.Margin = New-Object System.Windows.Forms.Padding(0, 0, $right, 0)
+    $tiles.Controls.Add($t, $Col, 0)
+    $t
+}
+$tileTotal = New-Tile 'Toplam dosya' $G.Files $C.Accent 0
+$tileWarn = New-Tile 'İnceleme bekliyor' $G.Review $C.Warning 1
+$tileSoon = New-Tile 'Yakında silinecek' $G.Clock $C.Danger 2
+$tileProt = New-Tile 'Korunan' $G.Shield $C.Success 3
+
+Add-Spacer $dash.Page 18
+$lifeCard = New-Card 140 22
+Add-Dock $dash.Page $lifeCard 'Top'
+$lifeTitle = New-Label 'Dosya yaşam döngüsü' (New-UiFont 11 'Segoe UI Semibold')
+$lifeTitle.Height = 28
+Add-Dock $lifeCard $lifeTitle 'Top'
+Add-Spacer $lifeCard 12
+$lifeBar = New-Object StfcUi.LifecycleBar
+Add-Dock $lifeCard $lifeBar 'Fill'
+
+Add-Spacer $dash.Page 18
+$dashBottom = New-Object System.Windows.Forms.TableLayoutPanel
+$dashBottom.ColumnCount = 2
+$dashBottom.RowCount = 1
+[void]$dashBottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 62)))
+[void]$dashBottom.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 38)))
+[void]$dashBottom.RowStyles.Add((New-Object System.Windows.Forms.RowStyle('Percent', 100)))
+Add-Dock $dash.Page $dashBottom 'Fill'
+
+# Yaklaşan silmeler
+$upCard = New-Card 100 18
+$upCard.Dock = 'Fill'
+$upCard.Margin = New-Object System.Windows.Forms.Padding(0, 0, 16, 0)
+$dashBottom.Controls.Add($upCard, 0, 0)
+$upHeader = New-Object System.Windows.Forms.Panel
+$upHeader.Height = 40
+Add-Dock $upCard $upHeader 'Top'
+$upAll = New-Button 'Tümünü incele' $G.Skip 'Soft' $C.Accent 150 34 { Show-Page 'review' }
+Add-Dock $upHeader $upAll 'Right'
+$upTitle = New-Label 'Yaklaşan otomatik silmeler' (New-UiFont 11 'Segoe UI Semibold')
+Add-Dock $upHeader $upTitle 'Fill'
+Add-Spacer $upCard 6
+$upGrid = New-Grid
+[void]$upGrid.AddText('ext', 'TÜR', 64, $false)
+[void]$upGrid.AddText('name', 'DOSYA', 0, $true)
+[void]$upGrid.AddText('left', 'KALAN', 96, $false)
+$upGrid.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Open-InExplorer ([string]$upGrid.Rows[$e.RowIndex].Tag) } })
+Add-Dock $upCard $upGrid 'Fill'
+$upEmpty = New-Label 'Önümüzdeki günlerde silinecek dosya yok.' (New-UiFont 10) $C.Muted 'MiddleCenter'
+$upEmpty.Visible = $false
+Add-Dock $upCard $upEmpty 'Fill'
+
+# Otomatik başlatma kartı
+$autoCard = New-Card 100 22
+$autoCard.Dock = 'Fill'
+$autoCard.Margin = New-Object System.Windows.Forms.Padding(0)
+$dashBottom.Controls.Add($autoCard, 1, 0)
+$autoTitle = New-Label 'Otomatik başlatma' (New-UiFont 11 'Segoe UI Semibold')
+$autoTitle.Height = 30
+Add-Dock $autoCard $autoTitle 'Top'
+$autoState = New-Label 'Kontrol ediliyor…' (New-UiFont 18 'Segoe UI Semibold') $C.Muted
+$autoState.Height = 44
+Add-Dock $autoCard $autoState 'Top'
+$autoDesc = New-Label '' (New-UiFont 9.5) $C.Muted 'TopLeft'
+$autoDesc.Height = 64
+Add-Dock $autoCard $autoDesc 'Top'
+$autoLast = New-Label '' (New-UiFont 9) $C.Muted 'TopLeft'
+$autoLast.Height = 24
+Add-Dock $autoCard $autoLast 'Top'
+$autoBtn = New-Button 'Kur' $G.Power 'Solid' $C.Accent 200 42 {
+    try {
+        if ($script:TaskInfo -and $script:TaskInfo.Silent) {
+            $ans = [System.Windows.Forms.MessageBox]::Show('Otomatik başlatma kapatılsın mı? Oturum açılışında dosyalar artık denetlenmeyecek.', 'Onay', 'YesNo', 'Question')
+            if ($ans -ne 'Yes') { return }
+            [void](Uninstall-CleanupTask -AllowElevation)
+            Show-Toast 'Otomatik başlatma kapatıldı' $C.Warning $G.Power
         }
         else {
-            [System.Windows.Forms.MessageBox]::Show("Temizleme betiği bulunamadı!", "Hata", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+            $mode = Install-CleanupTask -AllowElevation
+            $msg = if ($mode -eq 'launcher') { 'Otomatik başlatma etkin · pencere açılmadan çalışacak' } else { 'Otomatik başlatma etkin (yedek yöntem)' }
+            Show-Toast $msg
         }
-    })
-$pnlActions.Controls.Add($btnCleanNow)
-
-# Klasörü aç butonu
-$btnOpenFolder = New-Object System.Windows.Forms.Button
-$btnOpenFolder.Location = New-Object System.Drawing.Point(240, 125)
-$btnOpenFolder.Size = New-Object System.Drawing.Size(180, 50)
-$btnOpenFolder.Text = "📁 Klasörü Aç"
-$btnOpenFolder.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnOpenFolder.BackColor = $script:colorWarning
-$btnOpenFolder.ForeColor = [System.Drawing.Color]::White
-$btnOpenFolder.FlatStyle = "Flat"
-$btnOpenFolder.FlatAppearance.BorderSize = 0
-$btnOpenFolder.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnOpenFolder.Add_Click({
-        if (-not (Test-Path $script:baseFolder)) {
-            New-Item -ItemType Directory -Path $script:baseFolder -Force | Out-Null
-        }
-        Start-Process explorer.exe -ArgumentList $script:baseFolder
-    })
-$pnlActions.Controls.Add($btnOpenFolder)
-
+    }
+    catch { [System.Windows.Forms.MessageBox]::Show("İşlem başarısız: $($_.Exception.Message)", 'Hata', 'OK', 'Error') | Out-Null }
+    Update-TaskStatus
+}
+Add-Dock $autoCard $autoBtn 'Bottom'
 #endregion
 
-#region Tab 2: Ayarlar
-$tabSettings = New-Object System.Windows.Forms.TabPage
-$tabSettings.Text = "  Ayarlar  "
-$tabSettings.BackColor = [System.Drawing.Color]::White
-$tabControl.Controls.Add($tabSettings)
+#region Sayfa: İnceleme
+$rev = New-Page 'review' 'İnceleme' ''
+$script:ReviewMode = 'warning'
 
-# Başlık
-$lblSettingsHeader = New-Object System.Windows.Forms.Label
-$lblSettingsHeader.Location = New-Object System.Drawing.Point(30, 30)
-$lblSettingsHeader.Size = New-Object System.Drawing.Size(800, 40)
-$lblSettingsHeader.Text = "⚙️ Yapılandırma Ayarları"
-$lblSettingsHeader.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
-$lblSettingsHeader.ForeColor = $script:colorDark
-$tabSettings.Controls.Add($lblSettingsHeader)
+$revToolbar = New-Object System.Windows.Forms.FlowLayoutPanel
+$revToolbar.Height = 38
+$revToolbar.WrapContents = $false
+Add-Dock $rev.Page $revToolbar 'Top'
+$chipWarn = New-Button 'Uyarıdakiler' $G.Review 'Ghost' $C.Accent 150 36 { $script:ReviewMode = 'warning'; Update-ReviewGrid }
+$chipAll = New-Button 'Tüm dosyalar' $G.Files 'Ghost' $C.Accent 150 36 { $script:ReviewMode = 'all'; Update-ReviewGrid }
+foreach ($chip in @($chipWarn, $chipAll)) {
+    $chip.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+    $revToolbar.Controls.Add($chip)
+}
+$revHint = New-Label 'Satıra tıklayarak seçin · çift tıklayarak klasörde gösterin' (New-UiFont 9) $C.Muted
+$revHint.AutoSize = $false
+$revHint.Size = New-Object System.Drawing.Size(420, 36)
+$revHint.Margin = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+$revToolbar.Controls.Add($revHint)
 
-# Ayarlar paneli
-$pnlSettingsCard = New-Object System.Windows.Forms.Panel
-$pnlSettingsCard.Location = New-Object System.Drawing.Point(30, 90)
-$pnlSettingsCard.Size = New-Object System.Drawing.Size(800, 380)
-$pnlSettingsCard.BackColor = $script:colorLight
-$tabSettings.Controls.Add($pnlSettingsCard)
+Add-Spacer $rev.Page 14
 
-# Uyarı gün sayısı
-$lblWarningDays = New-Object System.Windows.Forms.Label
-$lblWarningDays.Location = New-Object System.Drawing.Point(40, 40)
-$lblWarningDays.Size = New-Object System.Drawing.Size(400, 30)
-$lblWarningDays.Text = "📅 Uyarı Gün Sayısı:"
-$lblWarningDays.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-$lblWarningDays.ForeColor = $script:colorDark
-$pnlSettingsCard.Controls.Add($lblWarningDays)
+# Alt eylem çubuğu
+$revBar = New-Card 72 14
+Add-Dock $rev.Page $revBar 'Bottom'
+Add-Spacer $rev.Page 14 'Bottom'
+$revButtons = New-Object System.Windows.Forms.FlowLayoutPanel
+$revButtons.FlowDirection = 'RightToLeft'
+$revButtons.WrapContents = $false
+$revButtons.Width = 600
+Add-Dock $revBar $revButtons 'Right'
+$revSummary = New-Label '' (New-UiFont 10 'Segoe UI Semibold')
+$revSummary.Padding = New-Object System.Windows.Forms.Padding(8, 0, 0, 0)
+Add-Dock $revBar $revSummary 'Fill'
 
-$numWarningDays = New-Object System.Windows.Forms.NumericUpDown
-$numWarningDays.Location = New-Object System.Drawing.Point(500, 38)
-$numWarningDays.Size = New-Object System.Drawing.Size(150, 30)
-$numWarningDays.Minimum = 1
-$numWarningDays.Maximum = 365
-$numWarningDays.Font = New-Object System.Drawing.Font("Segoe UI", 12)
-$numWarningDays.BackColor = [System.Drawing.Color]::White
-$pnlSettingsCard.Controls.Add($numWarningDays)
+$btnDelete = New-Button 'Sil' $G.Delete 'Solid' $C.Danger 130 42 {
+    $paths = Get-CheckedPaths $revGrid
+    if ($paths.Count -eq 0) { Show-Toast 'Önce en az bir dosya seçin' $C.Warning $G.Warn; return }
+    $cfg = Get-Config
+    $verb = if ($cfg.useRecycleBin) { "Geri Dönüşüm Kutusu'na taşınacak" } else { 'kalıcı olarak silinecek' }
+    $ans = [System.Windows.Forms.MessageBox]::Show("$($paths.Count) dosya $verb. Devam edilsin mi?", 'Silme onayı', 'YesNo', 'Warning')
+    if ($ans -ne 'Yes') { return }
+    $result = Remove-Files -Paths $paths -Recycle $cfg.useRecycleBin
+    Update-All
+    if ($result.Failed.Count -gt 0) {
+        [System.Windows.Forms.MessageBox]::Show("$($result.Deleted) dosya silindi, $($result.Failed.Count) dosya silinemedi:`n`n" + ($result.Failed -join "`n"), 'Bazı dosyalar silinemedi', 'OK', 'Warning') | Out-Null
+    }
+    else { Show-Toast "$($result.Deleted) dosya silindi" $C.Danger $G.Delete }
+}
+$btnProtect = New-Button 'Koru' $G.Shield 'Solid' $C.Success 130 42 {
+    $paths = Get-CheckedPaths $revGrid
+    if ($paths.Count -eq 0) { Show-Toast 'Önce en az bir dosya seçin' $C.Warning $G.Warn; return }
+    $n = Add-Protection $paths
+    Update-All
+    Show-Toast "$n dosya korumaya alındı" $C.Success $G.Shield
+}
+$btnSkip = New-Button 'Atla' $G.Skip 'Ghost' $C.Accent 120 42 {
+    Write-Log 'Kullanici dosyalari atlamayi secti'
+    if ($Startup) { $form.Close() } else { Show-Page 'dash' }
+}
+$btnSelectAll = New-Button 'Tümünü seç' $G.Check 'Ghost' $C.Accent 140 42 { $revGrid.SetAll(-not $revGrid.AllChecked()) }
+foreach ($b in @($btnDelete, $btnProtect, $btnSkip, $btnSelectAll)) { $revButtons.Controls.Add($b) }
+$revButtons.Padding = New-Object System.Windows.Forms.Padding(0, 1, 0, 0)
 
-$lblWarningDesc = New-Object System.Windows.Forms.Label
-$lblWarningDesc.Location = New-Object System.Drawing.Point(60, 75)
-$lblWarningDesc.Size = New-Object System.Drawing.Size(700, 25)
-$lblWarningDesc.Text = "Bu gün sayısı aşıldığında uyarı penceresi açar"
-$lblWarningDesc.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Italic)
-$lblWarningDesc.ForeColor = $script:colorText
-$pnlSettingsCard.Controls.Add($lblWarningDesc)
+$revCard = New-Card 100 10
+Add-Dock $rev.Page $revCard 'Fill'
+$revGrid = New-Grid
+[void]$revGrid.AddCheck()
+[void]$revGrid.AddText('ext', 'TÜR', 64, $false)
+[void]$revGrid.AddText('name', 'DOSYA', 0, $true)
+[void]$revGrid.AddText('folder', 'KLASÖR', 190, $false)
+[void]$revGrid.AddText('size', 'BOYUT', 96, $false)
+[void]$revGrid.AddText('age', 'YAŞ', 86, $false)
+[void]$revGrid.AddText('left', 'SİLİNMESİNE', 120, $false)
+$revGrid.Columns['size'].DefaultCellStyle.Alignment = 'MiddleRight'
+$revGrid.Columns['folder'].DefaultCellStyle.ForeColor = $C.Muted
+$revGrid.Columns['age'].DefaultCellStyle.ForeColor = $C.Muted
+$revGrid.Add_CellValueChanged({ Update-ReviewSummary })
+$revGrid.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Open-InExplorer ([string]$revGrid.Rows[$e.RowIndex].Tag) } })
+Add-Dock $revCard $revGrid 'Fill'
 
-# Çizgi
-$line1 = New-Object System.Windows.Forms.Label
-$line1.Location = New-Object System.Drawing.Point(40, 120)
-$line1.Size = New-Object System.Drawing.Size(720, 2)
-$line1.BorderStyle = "Fixed3D"
-$pnlSettingsCard.Controls.Add($line1)
+$revEmpty = New-Object System.Windows.Forms.Panel
+$revEmpty.Visible = $false
+Add-Dock $revCard $revEmpty 'Fill'
+$revEmptyGlyph = New-Label $G.Check (New-UiFont 34 ([StfcUi.Theme]::IconFamily)) $C.Success 'BottomCenter'
+$revEmptyGlyph.Height = 150
+Add-Dock $revEmpty $revEmptyGlyph 'Top'
+$revEmptyTitle = New-Label 'Her şey yolunda' (New-UiFont 15 'Segoe UI Semibold') $C.Text 'MiddleCenter'
+$revEmptyTitle.Height = 44
+Add-Dock $revEmpty $revEmptyTitle 'Top'
+$revEmptyText = New-Label 'İncelenecek dosya kalmadı. Diğer sayfalara soldaki menüden ulaşabilirsiniz.' (New-UiFont 10) $C.Muted 'TopCenter'
+$revEmptyText.Height = 30
+Add-Dock $revEmpty $revEmptyText 'Top'
 
-# Otomatik silme gün sayısı
-$lblDeletionDays = New-Object System.Windows.Forms.Label
-$lblDeletionDays.Location = New-Object System.Drawing.Point(40, 145)
-$lblDeletionDays.Size = New-Object System.Drawing.Size(400, 30)
-$lblDeletionDays.Text = "🗑️ Otomatik Silme Gün Sayısı:"
-$lblDeletionDays.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-$lblDeletionDays.ForeColor = $script:colorDark
-$pnlSettingsCard.Controls.Add($lblDeletionDays)
+function Get-CheckedPaths {
+    param($Grid)
+    $list = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $Grid.Rows.Count; $i++) {
+        if ($Grid.IsChecked($i)) { $list.Add([string]$Grid.Rows[$i].Tag) }
+    }
+    , $list.ToArray()
+}
 
-$numDeletionDays = New-Object System.Windows.Forms.NumericUpDown
-$numDeletionDays.Location = New-Object System.Drawing.Point(500, 143)
-$numDeletionDays.Size = New-Object System.Drawing.Size(150, 30)
-$numDeletionDays.Minimum = 1
-$numDeletionDays.Maximum = 365
-$numDeletionDays.Font = New-Object System.Drawing.Font("Segoe UI", 12)
-$numDeletionDays.BackColor = [System.Drawing.Color]::White
-$pnlSettingsCard.Controls.Add($numDeletionDays)
+function Update-ReviewSummary {
+    $paths = Get-CheckedPaths $revGrid
+    $size = 0
+    foreach ($p in $paths) { if ($script:FileIndex.ContainsKey($p)) { $size += $script:FileIndex[$p].Size } }
+    if ($revGrid.Rows.Count -eq 0) { $revSummary.Text = '' }
+    elseif ($paths.Count -eq 0) { $revSummary.Text = 'Seçili dosya yok'; $revSummary.ForeColor = $C.Muted }
+    else { $revSummary.Text = "$($paths.Count) dosya seçili · $(Format-Size $size)"; $revSummary.ForeColor = $C.Text }
+    $btnSelectAll.Text = if ($revGrid.AllChecked()) { 'Seçimi kaldır' } else { 'Tümünü seç' }
+    foreach ($b in @($btnDelete, $btnProtect)) { $b.Enabled = ($paths.Count -gt 0) }
+}
 
-$lblDeletionDesc = New-Object System.Windows.Forms.Label
-$lblDeletionDesc.Location = New-Object System.Drawing.Point(60, 180)
-$lblDeletionDesc.Size = New-Object System.Drawing.Size(700, 25)
-$lblDeletionDesc.Text = "Bu gün sayısı aşıldığında dosyalar otomatik silinir (korunanlar hariç)"
-$lblDeletionDesc.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Italic)
-$lblDeletionDesc.ForeColor = $script:colorText
-$pnlSettingsCard.Controls.Add($lblDeletionDesc)
+function Update-ReviewGrid {
+    $chipWarn.Selected = ($script:ReviewMode -eq 'warning')
+    $chipAll.Selected = ($script:ReviewMode -eq 'all')
+    $files = if ($script:ReviewMode -eq 'all') { $script:Files } else { $script:Files | Where-Object { $_.Stage -eq 'warning' } }
+    $files = @($files | Sort-Object @{ Expression = { if ($_.Stage -eq 'protected') { 1 } else { 0 } } }, DaysLeft, Name)
+    $defaultCheck = ($script:ReviewMode -eq 'warning')
 
-# Bilgi kutusu
-$pnlInfo = New-Object System.Windows.Forms.Panel
-$pnlInfo.Location = New-Object System.Drawing.Point(40, 230)
-$pnlInfo.Size = New-Object System.Drawing.Size(720, 80)
-$pnlInfo.BackColor = [System.Drawing.Color]::FromArgb(255, 243, 205)
-$pnlSettingsCard.Controls.Add($pnlInfo)
+    $revGrid.SuspendLayout()
+    $revGrid.Rows.Clear()
+    foreach ($f in $files) {
+        $left = Get-LeftInfo $f
+        $folder = if ($f.Folder) { $f.Folder } else { '—' }
+        $check = $defaultCheck -and $f.Stage -ne 'protected'
+        $i = $revGrid.Rows.Add($check, $f.Extension, $f.Name, $folder, (Format-Size $f.Size), (Format-Age $f.AgeDays), $left[0])
+        $row = $revGrid.Rows[$i]
+        $row.Tag = $f.FullName
+        $row.Cells['left'].Style.ForeColor = $left[1]
+    }
+    $revGrid.ResumeLayout()
+    $revGrid.ClearSelection()
 
-$lblInfo = New-Object System.Windows.Forms.Label
-$lblInfo.Location = New-Object System.Drawing.Point(15, 15)
-$lblInfo.Size = New-Object System.Drawing.Size(690, 50)
-$lblInfo.Text = "ℹ️ Önemli: Otomatik silme gün sayısı, uyarı gün sayısından büyük olmalıdır!`nÖrnek: Uyarı 7 gün, Otomatik silme 14 gün"
-$lblInfo.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$lblInfo.ForeColor = [System.Drawing.Color]::FromArgb(133, 100, 4)
-$pnlInfo.Controls.Add($lblInfo)
+    $warnCount = @($script:Files | Where-Object { $_.Stage -eq 'warning' }).Count
+    $chipWarn.Text = "Uyarıdakiler ($warnCount)"
+    $chipAll.Text = "Tüm dosyalar ($($script:Files.Count))"
+    $rev.Subtitle.Text = if ($warnCount -gt 0) {
+        "$warnCount dosya $($script:Config.warningDays) günden eski. Silmek, korumak ya da atlamak için seçin."
+    }
+    else { 'İncelenecek dosya yok.' }
 
-# Kaydet butonu
-$btnSaveSettings = New-Object System.Windows.Forms.Button
-$btnSaveSettings.Location = New-Object System.Drawing.Point(500, 325)
-$btnSaveSettings.Size = New-Object System.Drawing.Size(150, 45)
-$btnSaveSettings.Text = "💾 Kaydet"
-$btnSaveSettings.Font = New-Object System.Drawing.Font("Segoe UI", 12, [System.Drawing.FontStyle]::Bold)
-$btnSaveSettings.BackColor = $script:colorSuccess
-$btnSaveSettings.ForeColor = [System.Drawing.Color]::White
-$btnSaveSettings.FlatStyle = "Flat"
-$btnSaveSettings.FlatAppearance.BorderSize = 0
-$btnSaveSettings.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnSaveSettings.Add_Click({
-        if ($numDeletionDays.Value -le $numWarningDays.Value) {
-            [System.Windows.Forms.MessageBox]::Show("Otomatik silme gün sayısı, uyarı gün sayısından büyük olmalıdır!", "Hata", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-            return
-        }
-    
-        $config = @{
-            warningDays  = $numWarningDays.Value
-            deletionDays = $numDeletionDays.Value
-        }
-        Set-Config -config $config
-        [System.Windows.Forms.MessageBox]::Show("Ayarlar başarıyla kaydedildi!", "Başarılı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-    })
-$pnlSettingsCard.Controls.Add($btnSaveSettings)
-
+    $empty = ($files.Count -eq 0)
+    $revEmpty.Visible = $empty
+    $revGrid.Visible = -not $empty
+    Update-ReviewSummary
+}
 #endregion
 
-#region Tab 3: Korunan Dosyalar
-$tabProtected = New-Object System.Windows.Forms.TabPage
-$tabProtected.Text = "  Korunan Dosyalar  "
-$tabProtected.BackColor = [System.Drawing.Color]::White
-$tabControl.Controls.Add($tabProtected)
-
-$lblProtectedHeader = New-Object System.Windows.Forms.Label
-$lblProtectedHeader.Location = New-Object System.Drawing.Point(30, 30)
-$lblProtectedHeader.Size = New-Object System.Drawing.Size(800, 40)
-$lblProtectedHeader.Text = "🛡️ Korunan Dosyalar"
-$lblProtectedHeader.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
-$lblProtectedHeader.ForeColor = $script:colorDark
-$tabProtected.Controls.Add($lblProtectedHeader)
-
-$dgvProtected = New-Object System.Windows.Forms.DataGridView
-$dgvProtected.Location = New-Object System.Drawing.Point(30, 90)
-$dgvProtected.Size = New-Object System.Drawing.Size(800, 350)
-$dgvProtected.AutoSizeColumnsMode = "Fill"
-$dgvProtected.SelectionMode = "FullRowSelect"
-$dgvProtected.MultiSelect = $false
-$dgvProtected.ReadOnly = $true
-$dgvProtected.AllowUserToAddRows = $false
-$dgvProtected.BackgroundColor = [System.Drawing.Color]::White
-$dgvProtected.BorderStyle = "None"
-$dgvProtected.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$tabProtected.Controls.Add($dgvProtected)
-
-$btnRemoveProtection = New-Object System.Windows.Forms.Button
-$btnRemoveProtection.Location = New-Object System.Drawing.Point(30, 455)
-$btnRemoveProtection.Size = New-Object System.Drawing.Size(200, 45)
-$btnRemoveProtection.Text = "✕ Korumayı Kaldır"
-$btnRemoveProtection.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnRemoveProtection.BackColor = $script:colorDanger
-$btnRemoveProtection.ForeColor = [System.Drawing.Color]::White
-$btnRemoveProtection.FlatStyle = "Flat"
-$btnRemoveProtection.FlatAppearance.BorderSize = 0
-$btnRemoveProtection.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnRemoveProtection.Add_Click({
-        if ($dgvProtected.SelectedRows.Count -gt 0) {
-            $selectedPath = $dgvProtected.SelectedRows[0].Cells[0].Value
-        
-            $result = [System.Windows.Forms.MessageBox]::Show("Bu dosyanın korumasını kaldırmak istediğinize emin misiniz?`n`n$selectedPath", "Onay", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question)
-        
-            if ($result -eq [System.Windows.Forms.DialogResult]::Yes) {
-                $protected = Get-Content $script:protectedFile -Raw | ConvertFrom-Json
-                $protected.files = $protected.files | Where-Object { $_.path -ne $selectedPath }
-                $protected | ConvertTo-Json -Depth 10 | Out-File $script:protectedFile -Encoding UTF8
-            
-                Load-ProtectedFilesGrid
-                Update-StatusInfo
-                [System.Windows.Forms.MessageBox]::Show("Koruma kaldırıldı!", "Başarılı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
+#region Sayfa: Korunanlar
+$prot = New-Page 'protected' 'Korunan Dosyalar' 'Bu dosyalar süreleri dolsa bile otomatik silinmez.'
+$prot.Actions.Controls.Add((New-Button 'Dosya Ekle' $G.Add 'Solid' $C.Accent 140 40 {
+            $dlg = New-Object System.Windows.Forms.OpenFileDialog
+            $dlg.InitialDirectory = $script:BaseFolder
+            $dlg.Multiselect = $true
+            $dlg.Title = 'Korunacak dosyaları seçin'
+            if ($dlg.ShowDialog($form) -ne 'OK') { return }
+            $inside = @($dlg.FileNames | Where-Object { Test-InBaseFolder $_ })
+            if ($inside.Count -lt $dlg.FileNames.Count) { Show-Toast 'Yalnızca short-term-files içindeki dosyalar korunabilir' $C.Warning $G.Warn }
+            if ($inside.Count -gt 0) {
+                $n = Add-Protection $inside
+                Update-All
+                Show-Toast "$n dosya korumaya alındı" $C.Success $G.Shield
             }
-        }
-        else {
-            [System.Windows.Forms.MessageBox]::Show("Lütfen bir dosya seçin", "Uyarı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-        }
-    })
-$tabProtected.Controls.Add($btnRemoveProtection)
+        }))
+$prot.Actions.Controls.Add((New-Button 'Korumayı Kaldır' $G.Clear 'Outline' $C.Danger 170 40 {
+            $rels = Get-CheckedPaths $protGrid
+            if ($rels.Count -eq 0) { Show-Toast 'Önce en az bir dosya seçin' $C.Warning $G.Warn; return }
+            Remove-Protection $rels
+            Update-All
+            Show-Toast "$($rels.Count) dosyanın koruması kaldırıldı" $C.Warning $G.Shield
+        }))
+$prot.Actions.Controls.Add((New-Button 'Eksikleri Temizle' $G.Refresh 'Ghost' $C.Accent 170 40 {
+            $missing = @(Get-ProtectedEntries | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:BaseFolder $_.path)) } | ForEach-Object { $_.path })
+            if ($missing.Count -eq 0) { Show-Toast 'Listede eksik dosya yok'; return }
+            Remove-Protection $missing
+            Update-All
+            Show-Toast "$($missing.Count) eksik kayıt listeden çıkarıldı"
+        }))
 
-$btnRefreshProtected = New-Object System.Windows.Forms.Button
-$btnRefreshProtected.Location = New-Object System.Drawing.Point(630, 455)
-$btnRefreshProtected.Size = New-Object System.Drawing.Size(200, 45)
-$btnRefreshProtected.Text = "🔄 Yenile"
-$btnRefreshProtected.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnRefreshProtected.BackColor = $script:colorPrimary
-$btnRefreshProtected.ForeColor = [System.Drawing.Color]::White
-$btnRefreshProtected.FlatStyle = "Flat"
-$btnRefreshProtected.FlatAppearance.BorderSize = 0
-$btnRefreshProtected.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnRefreshProtected.Add_Click({
-        Load-ProtectedFilesGrid
-    })
-$tabProtected.Controls.Add($btnRefreshProtected)
+$protCard = New-Card 100 10
+Add-Dock $prot.Page $protCard 'Fill'
+$protGrid = New-Grid
+[void]$protGrid.AddCheck()
+[void]$protGrid.AddText('ext', 'TÜR', 64, $false)
+[void]$protGrid.AddText('path', 'DOSYA YOLU', 0, $true)
+[void]$protGrid.AddText('date', 'KORUNMA TARİHİ', 170, $false)
+[void]$protGrid.AddText('status', 'DURUM', 120, $false)
+$protGrid.Columns['date'].DefaultCellStyle.ForeColor = $C.Muted
+$protGrid.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Open-InExplorer (Join-Path $script:BaseFolder ([string]$protGrid.Rows[$e.RowIndex].Tag)) } })
+Add-Dock $protCard $protGrid 'Fill'
 
+function Update-ProtectedGrid {
+    $protGrid.Rows.Clear()
+    foreach ($e in Get-ProtectedEntries) {
+        $exists = Test-Path -LiteralPath (Join-Path $script:BaseFolder $e.path)
+        $date = [string]$e.protectedDate
+        try { $date = ([datetime]$e.protectedDate).ToString('dd.MM.yyyy HH:mm') } catch { }
+        $i = $protGrid.Rows.Add($false, [System.IO.Path]::GetExtension($e.path), $e.path, $date, $(if ($exists) { 'Mevcut' } else { 'Bulunamadı' }))
+        $protGrid.Rows[$i].Tag = [string]$e.path
+        $protGrid.Rows[$i].Cells['status'].Style.ForeColor = if ($exists) { $C.Success } else { $C.Muted }
+    }
+    $protGrid.ClearSelection()
+}
 #endregion
 
-#region Tab 4: Log
-$tabLog = New-Object System.Windows.Forms.TabPage
-$tabLog.Text = "  Log  "
-$tabLog.BackColor = [System.Drawing.Color]::White
-$tabControl.Controls.Add($tabLog)
+#region Sayfa: Ayarlar
+$set = New-Page 'settings' 'Ayarlar' 'Süreleri ve silme davranışını kendinize göre ayarlayın.'
 
-$lblLogHeader = New-Object System.Windows.Forms.Label
-$lblLogHeader.Location = New-Object System.Drawing.Point(30, 30)
-$lblLogHeader.Size = New-Object System.Drawing.Size(800, 40)
-$lblLogHeader.Text = "📋 İşlem Geçmişi"
-$lblLogHeader.Font = New-Object System.Drawing.Font("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
-$lblLogHeader.ForeColor = $script:colorDark
-$tabLog.Controls.Add($lblLogHeader)
+function New-SettingRow {
+    param($Parent, [string]$Title, [string]$Desc, [int]$Y)
+    $t = New-Label $Title (New-UiFont 11 'Segoe UI Semibold')
+    $t.SetBounds(22, $Y, 520, 26)
+    $Parent.Controls.Add($t)
+    $d = New-Label $Desc (New-UiFont 9.5) $C.Muted 'TopLeft'
+    $d.SetBounds(22, $Y + 28, 560, 22)
+    $Parent.Controls.Add($d)
+}
 
+function New-DayInput {
+    param($Parent, [int]$Y)
+    $n = New-Object System.Windows.Forms.NumericUpDown
+    $n.Minimum = 1
+    $n.Maximum = 365
+    $n.Font = New-UiFont 13 'Segoe UI Semibold'
+    $n.BackColor = $C.CardHi
+    $n.ForeColor = $C.Text
+    $n.BorderStyle = 'None'
+    $n.TextAlign = 'Center'
+    $n.SetBounds(820, $Y + 6, 84, 30)
+    $n.Anchor = 'Top,Right'
+    $Parent.Controls.Add($n)
+    $u = New-Label 'gün' (New-UiFont 10) $C.Muted
+    $u.SetBounds(912, $Y + 6, 40, 30)
+    $u.Anchor = 'Top,Right'
+    $Parent.Controls.Add($u)
+    $n
+}
+
+# Kartlar, sağa sabitlenen kontroller doğru konumlansın diye içerikleri eklendikten sonra yerleştirilir.
+$durCard = New-Card 230 0
+$durCard.Width = 980
+New-SettingRow $durCard 'Uyarı süresi' 'Bu kadar gün eski dosyalar için inceleme penceresi açılır.' 22
+$numWarn = New-DayInput $durCard 22
+$sep = New-Object System.Windows.Forms.Panel
+$sep.BackColor = $C.Border
+$sep.SetBounds(22, 92, 936, 1)
+$sep.Anchor = 'Top,Left,Right'
+$durCard.Controls.Add($sep)
+New-SettingRow $durCard 'Otomatik silme süresi' 'Bu kadar gün eski dosyalar (korunanlar hariç) oturum açılışında otomatik silinir.' 112
+$numDel = New-DayInput $durCard 112
+$durPreview = New-Label '' (New-UiFont 9.5 'Segoe UI Semibold') ([StfcUi.Gfx]::Mix($C.Accent, [System.Drawing.Color]::White, 0.35)) 'MiddleLeft'
+$durPreview.SetBounds(22, 178, 900, 30)
+$durCard.Controls.Add($durPreview)
+Add-Dock $set.Page $durCard 'Top'
+
+function Update-DurationPreview {
+    $w = [int]$numWarn.Value
+    $d = [int]$numDel.Value
+    if ($d -le $w) {
+        $durPreview.Text = '⚠  Otomatik silme süresi, uyarı süresinden büyük olmalı.'
+        $durPreview.ForeColor = $C.Danger
+    }
+    else {
+        $durPreview.Text = "0–$($w - 1) gün: yeni   ›   $w–$($d - 1) gün: inceleme   ›   $d+ gün: otomatik silinir"
+        $durPreview.ForeColor = [StfcUi.Gfx]::Mix($C.Accent, [System.Drawing.Color]::White, 0.35)
+    }
+}
+$numWarn.Add_ValueChanged({ Update-DurationPreview })
+$numDel.Add_ValueChanged({ Update-DurationPreview })
+
+Add-Spacer $set.Page 16
+$recCard = New-Card 96 0
+$recCard.Width = 980
+New-SettingRow $recCard "Geri Dönüşüm Kutusu'nu kullan" 'Açıkken silinen dosyalar kalıcı olarak silinmek yerine Geri Dönüşüm Kutusu''na taşınır.' 22
+$togRecycle = New-Object StfcUi.Toggle
+$togRecycle.SetBounds(892, 34, 50, 26)
+$togRecycle.Anchor = 'Top,Right'
+$recCard.Controls.Add($togRecycle)
+Add-Dock $set.Page $recCard 'Top'
+
+Add-Spacer $set.Page 20
+$setBar = New-Object System.Windows.Forms.FlowLayoutPanel
+$setBar.Height = 44
+$setBar.WrapContents = $false
+Add-Dock $set.Page $setBar 'Top'
+$btnSave = New-Button 'Kaydet' $G.Check 'Solid' $C.Accent 140 42 {
+    if ($numDel.Value -le $numWarn.Value) {
+        Show-Toast 'Otomatik silme süresi, uyarı süresinden büyük olmalı' $C.Danger $G.Warn
+        return
+    }
+    Save-Config ([pscustomobject]@{ warningDays = [int]$numWarn.Value; deletionDays = [int]$numDel.Value; useRecycleBin = $togRecycle.Checked })
+    Update-All
+    Show-Toast 'Ayarlar kaydedildi'
+}
+$btnSave.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+$setBar.Controls.Add($btnSave)
+$btnDefaults = New-Button 'Varsayılanlar' $G.Refresh 'Ghost' $C.Accent 150 42 {
+    $numWarn.Value = 7
+    $numDel.Value = 14
+    $togRecycle.Checked = $false
+}
+$btnDefaults.Margin = New-Object System.Windows.Forms.Padding(0)
+$setBar.Controls.Add($btnDefaults)
+
+function Update-SettingsView {
+    $numDel.Value = [math]::Min(365, [math]::Max(1, $script:Config.deletionDays))
+    $numWarn.Value = [math]::Min(365, [math]::Max(1, $script:Config.warningDays))
+    $togRecycle.Checked = $script:Config.useRecycleBin
+    Update-DurationPreview
+}
+#endregion
+
+#region Sayfa: Geçmiş
+$logPage = New-Page 'log' 'Geçmiş' 'Son işlemler (en yenisi en altta)'
+$logPage.Actions.Controls.Add((New-Button 'Dosyayı Aç' $G.Open 'Ghost' $C.Accent 140 40 {
+            if (Test-Path -LiteralPath $script:LogFile) { Start-Process notepad.exe -ArgumentList "`"$script:LogFile`"" }
+        }))
+$logPage.Actions.Controls.Add((New-Button 'Yenile' $G.Refresh 'Ghost' $C.Accent 120 40 { Update-LogView }))
+
+$logCard = New-Card 100 18
+Add-Dock $logPage.Page $logCard 'Fill'
 $txtLog = New-Object System.Windows.Forms.RichTextBox
-$txtLog.Location = New-Object System.Drawing.Point(30, 90)
-$txtLog.Size = New-Object System.Drawing.Size(800, 350)
-$txtLog.Font = New-Object System.Drawing.Font("Consolas", 9)
 $txtLog.ReadOnly = $true
-$txtLog.BackColor = [System.Drawing.Color]::FromArgb(250, 250, 250)
-$txtLog.BorderStyle = "None"
-$tabLog.Controls.Add($txtLog)
+$txtLog.BorderStyle = 'None'
+$txtLog.BackColor = $C.Card
+$txtLog.ForeColor = $C.Text
+$txtLog.Font = New-UiFont 9.5 'Consolas'
+$txtLog.DetectUrls = $false
+Add-Dock $logCard $txtLog 'Fill'
+[StfcUi.Native]::DarkTheme($txtLog)
 
-$btnRefreshLog = New-Object System.Windows.Forms.Button
-$btnRefreshLog.Location = New-Object System.Drawing.Point(430, 455)
-$btnRefreshLog.Size = New-Object System.Drawing.Size(190, 45)
-$btnRefreshLog.Text = "🔄 Yenile"
-$btnRefreshLog.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnRefreshLog.BackColor = $script:colorPrimary
-$btnRefreshLog.ForeColor = [System.Drawing.Color]::White
-$btnRefreshLog.FlatStyle = "Flat"
-$btnRefreshLog.FlatAppearance.BorderSize = 0
-$btnRefreshLog.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnRefreshLog.Add_Click({
-        Load-LogContent
-    })
-$tabLog.Controls.Add($btnRefreshLog)
+function Update-LogView {
+    $txtLog.Clear()
+    if (-not (Test-Path -LiteralPath $script:LogFile)) { $txtLog.Text = 'Henüz kayıt yok.'; return }
+    $lines = Get-Content -LiteralPath $script:LogFile -Encoding UTF8 -Tail 400
+    $txtLog.SuspendLayout()
+    foreach ($line in $lines) {
+        if ($line.Length -gt 22 -and $line[19] -eq ' ') {
+            $txtLog.SelectionColor = $C.Muted
+            $txtLog.AppendText($line.Substring(0, 19) + '   ')
+            $msg = $line.Substring(22)
+        }
+        else { $msg = $line }
+        $color = if ($msg -match 'hata|hatasi') { $C.Warning }
+        elseif ($msg -match '^(Otomatik silindi|Silindi)') { [StfcUi.Gfx]::Mix($C.Danger, [System.Drawing.Color]::White, 0.25) }
+        elseif ($msg -match '^Korumaya|^Koruma') { $C.Success }
+        elseif ($msg -match '^(Config|Baslangic|Uyari)') { [StfcUi.Gfx]::Mix($C.Accent2, [System.Drawing.Color]::White, 0.2) }
+        else { $C.Text }
+        $txtLog.SelectionColor = $color
+        $txtLog.AppendText($msg + "`n")
+    }
+    $txtLog.ResumeLayout()
+    $txtLog.SelectionStart = $txtLog.TextLength
+    $txtLog.ScrollToCaret()
+}
+#endregion
 
-$btnOpenLog = New-Object System.Windows.Forms.Button
-$btnOpenLog.Location = New-Object System.Drawing.Point(640, 455)
-$btnOpenLog.Size = New-Object System.Drawing.Size(190, 45)
-$btnOpenLog.Text = "📄 Dosyayı Aç"
-$btnOpenLog.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$btnOpenLog.BackColor = $script:colorWarning
-$btnOpenLog.ForeColor = [System.Drawing.Color]::White
-$btnOpenLog.FlatStyle = "Flat"
-$btnOpenLog.FlatAppearance.BorderSize = 0
-$btnOpenLog.Cursor = [System.Windows.Forms.Cursors]::Hand
-$btnOpenLog.Add_Click({
-        if (Test-Path $script:logFile) {
-            Start-Process notepad.exe -ArgumentList $script:logFile
+#region Sayfa: Hakkında
+$about = New-Page 'about' 'Hakkında' 'Geçici dosyalarınızı akıllıca yönetin.'
+$hero = New-Card 170 30
+$hero.Fill = [StfcUi.Gfx]::Mix($C.Card, $C.Accent, 0.45)
+$hero.Fill2 = [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.30)
+$hero.BorderColor = [StfcUi.Gfx]::Mix($C.Border, $C.Accent, 0.4)
+Add-Dock $about.Page $hero 'Top'
+$heroTitle = New-Label 'Kısa Süreli Dosya Temizleyici' (New-UiFont 22 'Segoe UI Semibold') ([System.Drawing.Color]::White)
+$heroTitle.Height = 46
+Add-Dock $hero $heroTitle 'Top'
+$heroVer = New-Label "Sürüm $script:AppVersion  ·  MIT Lisansı  ·  Umut Zaif" (New-UiFont 10) ([System.Drawing.Color]::FromArgb(220, 225, 255))
+$heroVer.Height = 26
+Add-Dock $hero $heroVer 'Top'
+$heroDesc = New-Label 'Masaüstündeki short-term-files klasörüne bıraktığınız dosyaları takip eder; süresi yaklaşanları size sorar, süresi dolanları otomatik temizler.' (New-UiFont 10.5) ([System.Drawing.Color]::FromArgb(235, 238, 255)) 'TopLeft'
+$heroDesc.Height = 50
+Add-Dock $hero $heroDesc 'Top'
+
+Add-Spacer $about.Page 18
+$steps = New-Object System.Windows.Forms.TableLayoutPanel
+$steps.Height = 132
+$steps.ColumnCount = 3
+$steps.RowCount = 1
+for ($i = 0; $i -lt 3; $i++) { [void]$steps.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 33.33))) }
+[void]$steps.RowStyles.Add((New-Object System.Windows.Forms.RowStyle('Percent', 100)))
+Add-Dock $about.Page $steps 'Top'
+$stepDefs = @(
+    @('1 · Bırak', 'Geçici dosyalarınızı short-term-files klasörüne atın; alt klasörler de taranır.', $C.Accent2),
+    @('2 · İncele', 'Uyarı süresi dolan dosyalar için oturum açılışında İnceleme ekranı açılır.', $C.Warning),
+    @('3 · Temizlen', 'Otomatik silme süresini aşan ve korunmayan dosyalar sessizce silinir.', $C.Success)
+)
+for ($i = 0; $i -lt 3; $i++) {
+    $sc = New-Card 100 20
+    $sc.Dock = 'Fill'
+    $sc.Margin = New-Object System.Windows.Forms.Padding(0, 0, $(if ($i -lt 2) { 16 } else { 0 }), 0)
+    $steps.Controls.Add($sc, $i, 0)
+    $st = New-Label $stepDefs[$i][0] (New-UiFont 12 'Segoe UI Semibold') $stepDefs[$i][2]
+    $st.Height = 30
+    Add-Dock $sc $st 'Top'
+    $sd = New-Label $stepDefs[$i][1] (New-UiFont 9.5) $C.Muted 'TopLeft'
+    Add-Dock $sc $sd 'Fill'
+}
+
+Add-Spacer $about.Page 18
+$linkBar = New-Object System.Windows.Forms.FlowLayoutPanel
+$linkBar.Height = 44
+$linkBar.WrapContents = $false
+Add-Dock $about.Page $linkBar 'Top'
+$btnRepo = New-Button 'GitHub deposu' $G.Link 'Soft' $C.Accent 170 42 { Start-Process $script:RepoUrl }
+$btnRepo.Margin = New-Object System.Windows.Forms.Padding(0, 0, 10, 0)
+$linkBar.Controls.Add($btnRepo)
+$btnIssue = New-Button 'Sorun bildir' $G.Bug 'Ghost' $C.Accent 150 42 { Start-Process "$script:RepoUrl/issues" }
+$btnIssue.Margin = New-Object System.Windows.Forms.Padding(0)
+$linkBar.Controls.Add($btnIssue)
+#endregion
+
+#region Veri yenileme
+function Update-Dashboard {
+    $files = $script:Files
+    $warn = @($files | Where-Object { $_.Stage -eq 'warning' })
+    $soon = @($warn | Where-Object { $_.DaysLeft -le 2 })
+    $fresh = @($files | Where-Object { $_.Stage -eq 'fresh' }).Count
+    $expired = @($files | Where-Object { $_.Stage -eq 'expired' }).Count
+    $protectedFiles = @($files | Where-Object { $_.Stage -eq 'protected' }).Count
+    $totalSize = ($files | Measure-Object -Property Size -Sum).Sum
+
+    $tileTotal.Value = "$($files.Count)"
+    $tileTotal.Sub = "Toplam $(Format-Size $totalSize)"
+    $tileWarn.Value = "$($warn.Count)"
+    $tileWarn.Sub = "$($script:Config.warningDays)+ gün eski, kararınızı bekliyor"
+    $tileSoon.Value = "$($soon.Count + $expired)"
+    $tileSoon.Sub = '2 gün içinde otomatik silinecek'
+    $tileProt.Value = "$protectedFiles"
+    $tileProt.Sub = 'Otomatik silmeden muaf'
+
+    $lifeBar.SetData(
+        [int[]]@($fresh, ($warn.Count - $soon.Count), ($soon.Count + $expired), $protectedFiles),
+        [System.Drawing.Color[]]@($C.Accent2, $C.Warning, $C.Danger, $C.Success),
+        [string[]]@('Yeni', 'İncelemede', 'Kritik', 'Korunan'))
+
+    $upGrid.Rows.Clear()
+    foreach ($f in @($warn | Sort-Object DaysLeft, Name | Select-Object -First 12)) {
+        $left = Get-LeftInfo $f
+        $i = $upGrid.Rows.Add($f.Extension, $f.RelPath, $left[0])
+        $upGrid.Rows[$i].Tag = $f.FullName
+        $upGrid.Rows[$i].Cells['left'].Style.ForeColor = $left[1]
+    }
+    $upGrid.ClearSelection()
+    $upEmpty.Visible = ($warn.Count -eq 0)
+    $upGrid.Visible = ($warn.Count -gt 0)
+    $upAll.Visible = ($warn.Count -gt 0)
+
+    $script:NavItems['review'].Badge = $warn.Count
+    $dash.Subtitle.Text = "Klasörün anlık durumu · son tarama $(Get-Date -Format 'HH:mm')"
+}
+
+function Update-All {
+    $script:Config = Get-Config
+    $script:Files = @(Get-ManagedFiles -Config $script:Config)
+    $script:FileIndex = @{}
+    foreach ($f in $script:Files) { $script:FileIndex[$f.FullName] = $f }
+    Update-Dashboard
+    Update-ReviewGrid
+    Update-ProtectedGrid
+    if ($script:CurrentPage -eq 'log') { Update-LogView }
+}
+
+function Update-TaskStatus {
+    $script:TaskInfo = $null
+    try { $script:TaskInfo = Get-TaskInfo } catch { }
+    if ($script:TaskInfo) {
+        $autoState.Text = 'Etkin'
+        $autoState.ForeColor = $C.Success
+        $autoLast.Text = if ($script:TaskInfo.LastRun) { "Son çalışma: $($script:TaskInfo.LastRun.ToString('dd.MM.yyyy HH:mm'))" } else { 'Henüz çalışmadı' }
+        if ($script:TaskInfo.Silent) {
+            $autoDesc.Text = 'Oturum açıldığında arka planda, hiçbir pencere açmadan çalışır. Yalnızca inceleme gerekiyorsa bu uygulama açılır.'
+            $autoBtn.Text = 'Kapat'
+            $autoBtn.Kind = 'Outline'
+            $autoBtn.Accent = $C.Danger
+            $sideDot.ForeColor = $C.Success
+            $sideStatusText.Text = 'Etkin · pencere açmaz'
         }
         else {
-            [System.Windows.Forms.MessageBox]::Show("Log dosyası bulunamadı!", "Uyarı", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
+            $autoState.ForeColor = $C.Warning
+            $autoDesc.Text = 'Eski yöntemle kurulu: açılışta PowerShell penceresi görünebilir. Sessiz başlatıcıya geçmek için güncelleyin.'
+            $autoBtn.Text = 'Sessiz moda güncelle'
+            $autoBtn.Kind = 'Solid'
+            $autoBtn.Accent = $C.Warning
+            $sideDot.ForeColor = $C.Warning
+            $sideStatusText.Text = 'Etkin · güncelleme gerekli'
         }
-    })
-$tabLog.Controls.Add($btnOpenLog)
-
-#endregion
-
-#region Tab 5: Hakkında
-$tabAbout = New-Object System.Windows.Forms.TabPage
-$tabAbout.Text = "  Hakkında  "
-$tabAbout.BackColor = [System.Drawing.Color]::White
-$tabControl.Controls.Add($tabAbout)
-
-# Logo/Başlık paneli
-$pnlAboutHeader = New-Object System.Windows.Forms.Panel
-$pnlAboutHeader.Location = New-Object System.Drawing.Point(0, 0)
-$pnlAboutHeader.Size = New-Object System.Drawing.Size(860, 150)
-$pnlAboutHeader.BackColor = $script:colorPrimary
-$tabAbout.Controls.Add($pnlAboutHeader)
-
-$lblAboutTitle = New-Object System.Windows.Forms.Label
-$lblAboutTitle.Location = New-Object System.Drawing.Point(30, 40)
-$lblAboutTitle.Size = New-Object System.Drawing.Size(800, 50)
-$lblAboutTitle.Text = "Kısa Süreli Dosya Temizleyici"
-$lblAboutTitle.Font = New-Object System.Drawing.Font("Segoe UI", 20, [System.Drawing.FontStyle]::Bold)
-$lblAboutTitle.ForeColor = [System.Drawing.Color]::White
-$lblAboutTitle.TextAlign = "MiddleCenter"
-$pnlAboutHeader.Controls.Add($lblAboutTitle)
-
-$lblVersion = New-Object System.Drawing.Font("Segoe UI", 12)
-$lblVersionText = New-Object System.Windows.Forms.Label
-$lblVersionText.Location = New-Object System.Drawing.Point(30, 100)
-$lblVersionText.Size = New-Object System.Drawing.Size(800, 30)
-$lblVersionText.Text = "Versiyon 2.0.0"
-$lblVersionText.Font = $lblVersion
-$lblVersionText.ForeColor = [System.Drawing.Color]::FromArgb(236, 240, 241)
-$lblVersionText.TextAlign = "MiddleCenter"
-$pnlAboutHeader.Controls.Add($lblVersionText)
-
-# İçerik
-$lblDescription = New-Object System.Windows.Forms.Label
-$lblDescription.Location = New-Object System.Drawing.Point(60, 180)
-$lblDescription.Size = New-Object System.Drawing.Size(740, 100)
-$lblDescription.Text = "Geçici dosyalarınızı otomatik olarak yönetin. Ayarlanabilir gün sayıları, dosya koruma sistemi ve kullanıcı dostu arayüz ile dosya yaşam döngüsünü tam kontrol edin."
-$lblDescription.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$lblDescription.ForeColor = $script:colorText
-$lblDescription.TextAlign = "MiddleCenter"
-$tabAbout.Controls.Add($lblDescription)
-
-$linkGitHub = New-Object System.Windows.Forms.LinkLabel
-$linkGitHub.Location = New-Object System.Drawing.Point(60, 310)
-$linkGitHub.Size = New-Object System.Drawing.Size(740, 30)
-$linkGitHub.Text = "🔗 GitHub: github.com/[username]/short-term-file-cleaner"
-$linkGitHub.Font = New-Object System.Drawing.Font("Segoe UI", 11)
-$linkGitHub.TextAlign = "MiddleCenter"
-$linkGitHub.LinkColor = $script:colorPrimary
-$linkGitHub.Add_LinkClicked({
-        Start-Process "https://github.com"
-    })
-$tabAbout.Controls.Add($linkGitHub)
-
-$lblLicense = New-Object System.Windows.Forms.Label
-$lblLicense.Location = New-Object System.Drawing.Point(60, 360)
-$lblLicense.Size = New-Object System.Drawing.Size(740, 30)
-$lblLicense.Text = "📜 MIT License - Kişisel kullanım için özgürce kullanılabilir"
-$lblLicense.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$lblLicense.ForeColor = $script:colorText
-$lblLicense.TextAlign = "MiddleCenter"
-$tabAbout.Controls.Add($lblLicense)
-
-#endregion
-
-# StatusStrip
-$statusStrip = New-Object System.Windows.Forms.StatusStrip
-$statusStrip.BackColor = $script:colorLight
-$statusLabel = New-Object System.Windows.Forms.ToolStripStatusLabel
-$statusLabel.Text = "Hazır"
-$statusLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$statusStrip.Items.Add($statusLabel) | Out-Null
-$mainForm.Controls.Add($statusStrip)
-
-# Helper fonksiyonlar
-function Update-StatusInfo {
-    $config = Get-Config
-    $protected = Get-ProtectedFiles
-    $isInstalled = Test-TaskInstalled
-    
-    if ($isInstalled) {
-        $lblTaskStatus.Text = "✓ Durum: Kurulu ve aktif"
-        $lblTaskStatus.ForeColor = $script:colorSuccess
-        $lblNextRun.Text = "⏰ Sonraki çalışma: Bilgisayar açıldığında"
     }
     else {
-        $lblTaskStatus.Text = "✕ Durum: Kurulu değil"
-        $lblTaskStatus.ForeColor = $script:colorDanger
-        $lblNextRun.Text = "⏰ Sonraki çalışma: -"
-    }
-    
-    $lblProtectedCount.Text = "🛡️ Korunan dosya sayısı: $($protected.Count)"
-}
-
-function Load-ProtectedFilesGrid {
-    $dgvProtected.Rows.Clear()
-    $dgvProtected.Columns.Clear()
-    
-    $dgvProtected.Columns.Add("Path", "Dosya Yolu") | Out-Null
-    $dgvProtected.Columns.Add("Date", "Korunma Tarihi") | Out-Null
-    
-    $protected = Get-ProtectedFiles
-    foreach ($file in $protected) {
-        $dgvProtected.Rows.Add($file.path, $file.protectedDate) | Out-Null
+        $autoState.Text = 'Kapalı'
+        $autoState.ForeColor = $C.Danger
+        $autoDesc.Text = 'Kurulduğunda, oturum her açıldığında klasör sessizce denetlenir ve yalnızca gerekirse inceleme ekranı açılır.'
+        $autoLast.Text = ''
+        $autoBtn.Text = 'Otomatik başlatmayı kur'
+        $autoBtn.Kind = 'Solid'
+        $autoBtn.Accent = $C.Accent
+        $sideDot.ForeColor = $C.Danger
+        $sideStatusText.Text = 'Kapalı'
     }
 }
+#endregion
 
-function Load-LogContent {
-    if (Test-Path $script:logFile) {
-        $txtLog.Text = Get-Content $script:logFile -Raw
-        $txtLog.SelectionStart = $txtLog.Text.Length
-        $txtLog.ScrollToCaret()
-    }
-    else {
-        $txtLog.Text = "Log dosyası henüz oluşturulmamış."
-    }
-}
-
-# Form yüklendiğinde
-$mainForm.Add_Load({
-        $config = Get-Config
-        $numWarningDays.Value = $config.warningDays
-        $numDeletionDays.Value = $config.deletionDays
-    
-        Update-StatusInfo
-        Load-ProtectedFilesGrid
-        Load-LogContent
+#region Başlatma
+$form.Add_Load({
+        Update-All
+        Update-SettingsView
+        if ($Startup) { Show-Page 'review' } else { Show-Page 'dash' }
     })
 
-# Formu göster
-[void]$mainForm.ShowDialog()
+$form.Add_Shown({
+        if ($Startup) {
+            $form.TopMost = $true
+            $form.Activate()
+            $form.TopMost = $false
+        }
+        # Görev Zamanlayıcı sorgusu yavaş olabilir; pencere çizildikten sonra çalıştır.
+        $deferred = New-Object System.Windows.Forms.Timer
+        $deferred.Interval = 150
+        $deferred.Add_Tick({
+                $this.Stop()
+                Update-TaskStatus
+                # Eski (pencere açan) görevi sessiz başlatıcıya taşı
+                if ($script:TaskInfo -and -not $script:TaskInfo.Silent) {
+                    try { [void](Install-CleanupTask); Update-TaskStatus }
+                    catch { Write-Log "Gorev otomatik guncellenemedi: $($_.Exception.Message)" }
+                }
+            })
+        $deferred.Start()
+    })
+
+$form.Add_FormClosed({
+        if ($Startup) { Write-Log 'Inceleme penceresi kapatildi' }
+        try { $script:InstanceMutex.ReleaseMutex() } catch { }
+    })
+
+[StfcUi.Native]::DarkTheme($content)
+# Yüksek DPI: tüm yerleşimi ekran ölçeğine göre büyüt (yazı tipleri zaten DPI'a göre çizilir)
+$scale = [StfcUi.Theme]::Scale
+if ([math]::Abs($scale - 1) -gt 0.01) { $form.Scale((New-Object System.Drawing.SizeF($scale, $scale))) }
+$form.MinimumSize = New-Object System.Drawing.Size([StfcUi.Theme]::S(1060), [StfcUi.Theme]::S(700))
+[void]$form.ShowDialog()
+#endregion

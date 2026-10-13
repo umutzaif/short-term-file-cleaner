@@ -15,8 +15,11 @@ desktop.ini
 !CHANGELOG.md
 !MainApp.ps1
 !.system/
+!.system/Core.ps1
+!.system/UiKit.cs
+!.system/Launcher.cs
 !.system/ShortTermFileCleaner.ps1
-!.system/ConfigEditor.ps1
 !.system/Install.ps1
 !.system/Uninstall.ps1
 !screenshots/
+!screenshots/*.png
