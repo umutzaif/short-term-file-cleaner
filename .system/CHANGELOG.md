@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.0] - 2026-10-14
+
+### Added
+- **Uygulama içi güncelleme**: Açılışta GitHub'daki son sürüm arka planda (arayüzü dondurmadan) denetlenir.
+  Yeni sürüm varsa Genel Bakış'ta normalde gizli olan **Güncelle** düğmesi görünür, Hakkında sayfasında sürüm
+  notlarıyla birlikte gösterilir. Güncelleme yerinde kurulur ve uygulama yeniden başlar. Ayarlar, koruma listesi,
+  loglar ve kullanıcı dosyaları korunur. Çalışan exe `.system\_old`'a alınır, bir hata olursa önceki sürüm
+  geri yüklenir. Güncelse Hakkında'da "Sürüm x.x.x · Güncel" yazar, elle **Denetle** de yapılabilir.
+- **Tema seçimi**: Ayarlar'da **Gece**, **Gündüz** ve **Sistem** (Windows renk ayarını izler). Pencere başlığı,
+  kaydırma çubukları ve tüm özel kontroller temaya uyar.
+
+### Changed
+- Hakkında sayfasına güncelleme kartı eklendi.
+
 ## [3.1.0] - 2026-10-14
 
 ### Added

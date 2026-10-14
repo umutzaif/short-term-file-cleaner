@@ -28,8 +28,48 @@ namespace StfcUi
         public static string IconFamily = "Segoe MDL2 Assets";
         public static string FontFamily = "Segoe UI";
         public static float Scale = 1f;
+        public static bool IsDark = true;
 
         public static int S(float v) { return (int)Math.Round(v * Scale); }
+
+        // Yuzeylerin uzerine bindirilen hover/iz rengi: koyu temada beyaz, acik temada siyah
+        public static Color Overlay { get { return IsDark ? Color.White : Color.Black; } }
+
+        // Vurgu rengini zemine gore okunur tona cevirir (koyu: acar, acik: koyulastirir)
+        public static Color Tint(Color c, float t)
+        {
+            return IsDark ? Gfx.Mix(c, Color.White, t) : Gfx.Mix(c, Color.Black, t * 0.55f);
+        }
+
+        // Gunduz temasi paleti
+        public static void ApplyLight()
+        {
+            IsDark = false;
+            Bg = Color.FromArgb(242, 244, 250);
+            Side = Color.FromArgb(255, 255, 255);
+            Card = Color.FromArgb(255, 255, 255);
+            CardHi = Color.FromArgb(236, 239, 247);
+            Border = Color.FromArgb(222, 226, 237);
+            Text = Color.FromArgb(22, 27, 45);
+            Muted = Color.FromArgb(98, 108, 132);
+            Accent = Color.FromArgb(112, 80, 248);
+            Accent2 = Color.FromArgb(14, 165, 233);
+            Success = Color.FromArgb(22, 163, 74);
+            Warning = Color.FromArgb(217, 119, 6);
+            Danger = Color.FromArgb(225, 29, 72);
+        }
+
+        // Windows uygulama temasi (Ayarlar > Kisisellestirme > Renkler)
+        public static bool SystemPrefersDark()
+        {
+            try
+            {
+                object v = Microsoft.Win32.Registry.GetValue(
+                    @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1);
+                return v is int && (int)v == 0;
+            }
+            catch { return true; }
+        }
     }
 
     public static class Native
@@ -60,7 +100,7 @@ namespace StfcUi
 
         public static void StyleWindow(IntPtr hwnd, Color caption)
         {
-            int on = 1;
+            int on = Theme.IsDark ? 1 : 0;
             if (DwmSetWindowAttribute(hwnd, 20, ref on, 4) != 0) DwmSetWindowAttribute(hwnd, 19, ref on, 4);
             int round = 2;
             DwmSetWindowAttribute(hwnd, 33, ref round, 4);
@@ -79,8 +119,9 @@ namespace StfcUi
         // Kaydirma cubuklari gibi yerel parcalari koyu temaya alir.
         public static void DarkTheme(Control c)
         {
-            if (c.IsHandleCreated) SetWindowTheme(c.Handle, "DarkMode_Explorer", null);
-            else c.HandleCreated += delegate(object s, EventArgs e) { SetWindowTheme(((Control)s).Handle, "DarkMode_Explorer", null); };
+            string theme = Theme.IsDark ? "DarkMode_Explorer" : "Explorer";
+            if (c.IsHandleCreated) SetWindowTheme(c.Handle, theme, null);
+            else c.HandleCreated += delegate(object s, EventArgs e) { SetWindowTheme(((Control)s).Handle, theme, null); };
             foreach (Control child in c.Controls) DarkTheme(child);
         }
     }
@@ -241,16 +282,16 @@ namespace StfcUi
                     break;
                 case ButtonKind.Soft:
                     bg = Gfx.Mix(outer, accent, hover ? 0.30f : 0.18f);
-                    fg = Gfx.Mix(accent, Color.White, 0.45f);
+                    fg = Theme.Tint(accent, 0.45f);
                     break;
                 case ButtonKind.Outline:
                     bg = hover ? Gfx.Mix(outer, accent, 0.14f) : outer;
                     bd = Gfx.Mix(outer, accent, 0.75f);
-                    fg = Gfx.Mix(accent, Color.White, 0.35f);
+                    fg = Theme.Tint(accent, 0.35f);
                     break;
                 default:
-                    bg = hover ? Gfx.Mix(outer, Color.White, 0.07f) : Gfx.Mix(outer, Color.White, 0.03f);
-                    bd = Gfx.Mix(outer, Color.White, 0.10f);
+                    bg = hover ? Gfx.Mix(outer, Theme.Overlay, 0.07f) : Gfx.Mix(outer, Theme.Overlay, 0.03f);
+                    bd = Gfx.Mix(outer, Theme.Overlay, 0.12f);
                     fg = Theme.Text;
                     break;
             }
@@ -321,12 +362,12 @@ namespace StfcUi
             else if (hover)
             {
                 using (GraphicsPath p = Gfx.Round(r, Theme.S(10)))
-                using (SolidBrush b = new SolidBrush(Gfx.Mix(outer, Color.White, 0.05f)))
+                using (SolidBrush b = new SolidBrush(Gfx.Mix(outer, Theme.Overlay, 0.05f)))
                     g.FillPath(b, p);
             }
 
             Color fg = active ? Theme.Text : (hover ? Gfx.Mix(Theme.Muted, Theme.Text, 0.5f) : Theme.Muted);
-            Color gc = active ? Gfx.Mix(Theme.Accent, Color.White, 0.40f) : fg;
+            Color gc = active ? Theme.Tint(Theme.Accent, 0.40f) : fg;
             Gfx.Glyph(g, glyph, 12f, gc, new Rectangle(Theme.S(14), 0, Theme.S(24), Height));
 
             int right = Width - Theme.S(10);
@@ -393,7 +434,7 @@ namespace StfcUi
             using (GraphicsPath p = Gfx.Round(br, Theme.S(11)))
             using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Card, accent, 0.26f)))
                 g.FillPath(b, p);
-            Gfx.Glyph(g, glyph, 13f, Gfx.Mix(accent, Color.White, 0.30f), br);
+            Gfx.Glyph(g, glyph, 13f, Theme.Tint(accent, 0.30f), br);
 
             using (Font tf = new Font(Theme.FontFamily, 9.5f))
                 TextRenderer.DrawText(g, title, tf, new Rectangle(br.Right + Theme.S(12), pad, Width - br.Right - pad - Theme.S(12), bub), Theme.Muted,
@@ -442,7 +483,7 @@ namespace StfcUi
             float h = Theme.S(14);
             RectangleF track = new RectangleF(0, Theme.S(2), Width - 1, h);
             using (GraphicsPath p = Gfx.Round(track, h / 2))
-            using (SolidBrush b = new SolidBrush(Gfx.Mix(outer, Color.White, 0.06f)))
+            using (SolidBrush b = new SolidBrush(Gfx.Mix(outer, Theme.Overlay, 0.07f)))
                 g.FillPath(b, p);
 
             int total = 0, nonZero = 0;
@@ -527,7 +568,7 @@ namespace StfcUi
             Gfx.Hq(g);
             RectangleF r = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
             using (GraphicsPath p = Gfx.Round(r, r.Height / 2))
-            using (SolidBrush b = new SolidBrush(on ? Theme.Accent : Gfx.Mix(outer, Color.White, 0.16f)))
+            using (SolidBrush b = new SolidBrush(on ? Theme.Accent : Gfx.Mix(outer, Theme.Overlay, 0.18f)))
                 g.FillPath(b, p);
             float d = Height - Theme.S(6);
             float x = on ? Width - d - Theme.S(3) : Theme.S(3);
@@ -668,7 +709,7 @@ namespace StfcUi
                 }
                 else
                 {
-                    using (Pen pen = new Pen(Gfx.Mix(Theme.Card, Color.White, 0.28f), 1.4f)) g.DrawPath(pen, p);
+                    using (Pen pen = new Pen(Gfx.Mix(Theme.Card, Theme.Overlay, 0.28f), 1.4f)) g.DrawPath(pen, p);
                 }
             }
         }
@@ -694,7 +735,7 @@ namespace StfcUi
 
             bool selected = (e.State & DataGridViewElementStates.Selected) != 0;
             Color bg = selected ? Gfx.Mix(Theme.Card, Theme.Accent, 0.20f)
-                     : (e.RowIndex == hoverRow ? Gfx.Mix(Theme.Card, Color.White, 0.04f) : Theme.Card);
+                     : (e.RowIndex == hoverRow ? Gfx.Mix(Theme.Card, Theme.Overlay, 0.04f) : Theme.Card);
             using (SolidBrush b = new SolidBrush(bg)) g.FillRectangle(b, e.CellBounds);
             using (Pen pen = new Pen(Gfx.Mix(Theme.Card, Theme.Border, 0.7f)))
                 g.DrawLine(pen, e.CellBounds.Left, e.CellBounds.Bottom - 1, e.CellBounds.Right, e.CellBounds.Bottom - 1);
@@ -719,7 +760,7 @@ namespace StfcUi
                     using (GraphicsPath p = Gfx.Round(r, Theme.S(6)))
                     using (SolidBrush b = new SolidBrush(Gfx.Mix(bg, c, 0.22f)))
                         g.FillPath(b, p);
-                    TextRenderer.DrawText(g, ext, f, r, Gfx.Mix(c, Color.White, 0.35f),
+                    TextRenderer.DrawText(g, ext, f, r, Theme.Tint(c, 0.35f),
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
             }
@@ -891,7 +932,7 @@ namespace StfcUi
         {
             int cx = W / 2, cy = Theme.S(72), r = Theme.S(34);
             using (SolidBrush b = new SolidBrush(Gfx.Mix(Theme.Card, Theme.Danger, 0.22f))) g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
-            Gfx.Glyph(g, "", 19f, Gfx.Mix(Theme.Danger, Color.White, 0.25f), new Rectangle(cx - r, cy - r, r * 2, r * 2));
+            Gfx.Glyph(g, "", 19f, Theme.Tint(Theme.Danger, 0.25f), new Rectangle(cx - r, cy - r, r * 2, r * 2));
 
             Center(g, total + " dosya silinsin mi?", title, Theme.Text, Theme.S(118), Theme.S(34));
             string where = recycle ? "Geri Dönüşüm Kutusu'na taşınacak" : "kalıcı olarak silinecek";
@@ -924,11 +965,11 @@ namespace StfcUi
             double ms = phase == Phase.Done ? (DateTime.Now - doneAt).TotalMilliseconds : 0;
             Color doneColor = failures.Length > 0 ? Theme.Warning : Theme.Success;
 
-            using (Pen track = new Pen(Gfx.Mix(Theme.Card, Color.White, 0.07f), th)) g.DrawEllipse(track, ring);
+            using (Pen track = new Pen(Gfx.Mix(Theme.Card, Theme.Overlay, 0.08f), th)) g.DrawEllipse(track, ring);
 
             if (phase == Phase.Working)
             {
-                using (Pen shimmer = new Pen(Gfx.Mix(Theme.Card, Color.White, 0.14f), th))
+                using (Pen shimmer = new Pen(Gfx.Mix(Theme.Card, Theme.Overlay, 0.15f), th))
                 {
                     shimmer.StartCap = LineCap.Round; shimmer.EndCap = LineCap.Round;
                     g.DrawArc(shimmer, ring, spin, 38f);
@@ -955,7 +996,7 @@ namespace StfcUi
                 {
                     double a = (-90 + sweep) * Math.PI / 180;
                     float dx = cx + (float)(R * Math.Cos(a)), dy = cy + (float)(R * Math.Sin(a));
-                    using (SolidBrush b = new SolidBrush(Color.White)) g.FillEllipse(b, dx - th * 0.32f, dy - th * 0.32f, th * 0.64f, th * 0.64f);
+                    using (SolidBrush b = new SolidBrush(Theme.IsDark ? Color.White : Theme.Card)) g.FillEllipse(b, dx - th * 0.32f, dy - th * 0.32f, th * 0.64f, th * 0.64f);
                 }
             }
 
@@ -1017,7 +1058,7 @@ namespace StfcUi
             }
 
             Center(g, doneTitle, title, Theme.Text, Theme.S(200), Theme.S(32));
-            Center(g, doneSub, body, Gfx.Mix(doneColor, Color.White, 0.35f), Theme.S(232), Theme.S(22));
+            Center(g, doneSub, body, Theme.Tint(doneColor, 0.35f), Theme.S(232), Theme.S(22));
             int ny = Theme.S(268);
             Gfx.Glyph(g, "", 10f, Theme.Muted, new Rectangle(Theme.S(40), ny, Theme.S(22), Theme.S(40)));
             TextRenderer.DrawText(g, doneNote, small, new Rectangle(Theme.S(68), ny, W - Theme.S(108), Theme.S(40)), Theme.Muted,

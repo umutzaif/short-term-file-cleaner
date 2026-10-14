@@ -2,9 +2,10 @@
 # MainApp.ps1, Install.ps1, Uninstall.ps1 ve build\Build.ps1 tarafından dot-source edilir.
 # Not: Tüm dosya işlemleri -LiteralPath kullanır; köşeli parantez içeren adlar ([ ]) joker karakter sayılmaz.
 
-$script:AppVersion    = '3.1.0'
+$script:AppVersion    = '3.2.0'
 $script:AppTitle      = 'Kısa Süreli Dosya Temizleyici'
 $script:RepoUrl       = 'https://github.com/umutzaif/short-term-file-cleaner'
+$script:UpdateApi     = 'https://api.github.com/repos/umutzaif/short-term-file-cleaner/releases/latest'
 $script:SystemFolder  = $PSScriptRoot
 $script:BaseFolder    = Split-Path -Parent $PSScriptRoot
 $script:AssetsFolder  = Join-Path $script:SystemFolder 'assets'
@@ -56,7 +57,7 @@ function Write-JsonFile {
 }
 
 function Get-Config {
-    $cfg = [ordered]@{ warningDays = 7; deletionDays = 14; useRecycleBin = $false; showOnStartup = $true; setupDone = $false }
+    $cfg = [ordered]@{ warningDays = 7; deletionDays = 14; useRecycleBin = $false; showOnStartup = $true; setupDone = $false; theme = 'dark' }
     if (Test-Path -LiteralPath $script:ConfigFile) {
         try {
             $json = Get-Content -LiteralPath $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -72,6 +73,7 @@ function Get-Config {
         useRecycleBin = [bool]$cfg.useRecycleBin
         showOnStartup = [bool]$cfg.showOnStartup
         setupDone     = [bool]$cfg.setupDone
+        theme         = $(if (@('dark', 'light', 'system') -contains [string]$cfg.theme) { [string]$cfg.theme } else { 'dark' })
     }
 }
 
@@ -88,6 +90,7 @@ function Save-Config {
             useRecycleBin = [bool]$cfg.useRecycleBin
             showOnStartup = [bool]$cfg.showOnStartup
             setupDone     = [bool]$cfg.setupDone
+            theme         = [string]$cfg.theme
             lastModified  = (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz')
         })
 }
@@ -428,6 +431,9 @@ function Invoke-Migration {
         Save-ProtectedEntries $clean
         Write-Log "Koruma listesinden $($raw.Count - $clean.Count) uygulama dosyasi cikarildi"
     }
+    # Önceki güncellemeden kalan eski dosyalar
+    $old = Join-Path $script:SystemFolder '_old'
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Recurse -Force -ErrorAction SilentlyContinue }
     # v3.0 sessiz başlatıcısı artık kullanılmıyor
     $oldLauncher = Join-Path $script:SystemFolder 'Launcher.exe'
     if (Test-Path -LiteralPath $oldLauncher) { Remove-Item -LiteralPath $oldLauncher -Force -ErrorAction SilentlyContinue }
@@ -450,6 +456,7 @@ function Copy-AppToDesktop {
     New-Item -ItemType Directory -Path $targetSystem -Force | Out-Null
     Copy-Item -LiteralPath $script:AppExe -Destination $target -Force
     foreach ($item in Get-ChildItem -LiteralPath $script:SystemFolder -Force) {
+        if ($item.Name -eq '_old') { continue }
         if ($script:DataFiles -contains $item.Name -and (Test-Path -LiteralPath (Join-Path $targetSystem $item.Name))) { continue }
         Copy-Item -LiteralPath $item.FullName -Destination $targetSystem -Recurse -Force
     }
@@ -552,5 +559,128 @@ function Invoke-Setup {
     Save-Config ([pscustomobject]@{ setupDone = $true })
     Write-Log "Kurulum tamamlandi: $($Options -join ', ')"
     return $errors.ToArray()
+}
+#endregion
+
+#region Güncelleme (GitHub Releases)
+function Enable-Tls12 {
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+}
+
+function New-UpdateClient {
+    Enable-Tls12
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers['User-Agent'] = "ShortTermFileCleaner/$script:AppVersion"
+    $wc.Encoding = [System.Text.Encoding]::UTF8
+    return $wc
+}
+
+function ConvertTo-AppVersion {
+    param([string]$Text)
+    $clean = ([string]$Text).Trim().TrimStart('v', 'V')
+    $v = $null
+    if ([version]::TryParse($clean, [ref]$v)) { return $v }
+    return $null
+}
+
+# GitHub "latest release" yanıtını yorumlar.
+function Read-ReleaseInfo {
+    param([string]$Json)
+    $r = $Json | ConvertFrom-Json
+    $latest = ConvertTo-AppVersion $r.tag_name
+    $current = ConvertTo-AppVersion $script:AppVersion
+    [pscustomobject]@{
+        Version   = $(if ($latest) { $latest.ToString() } else { [string]$r.tag_name })
+        Available = ($latest -and $current -and $latest -gt $current)
+        Notes     = [string]$r.body
+        ZipUrl    = [string]$r.zipball_url
+        PageUrl   = [string]$r.html_url
+    }
+}
+
+# Eşzamanlı (betik/test için). Arayüz, aynı istekleri dondurmamak için zaman uyumsuz yapar.
+function Get-LatestRelease {
+    $wc = New-UpdateClient
+    try { return Read-ReleaseInfo ($wc.DownloadString($script:UpdateApi)) } finally { $wc.Dispose() }
+}
+
+# İndirilen ve açılan sürümün kök klasörünü bulur (GitHub ZIP'i tek bir üst klasör içerir).
+function Find-ReleaseRoot {
+    param([string]$ExtractedPath)
+    $candidates = @($ExtractedPath) + @(Get-ChildItem -LiteralPath $ExtractedPath -Directory -Force | ForEach-Object { $_.FullName })
+    foreach ($c in $candidates) {
+        if ((Test-Path -LiteralPath (Join-Path $c $script:AppExeName)) -and
+            (Test-Path -LiteralPath (Join-Path $c '.system\MainApp.ps1')) -and
+            (Test-Path -LiteralPath (Join-Path $c '.system\Core.ps1'))) { return $c }
+    }
+    return $null
+}
+
+# Yeni sürümü yerinde kurar. Kullanıcı verileri (ayarlar, koruma listesi, loglar) korunur.
+# Çalışan exe yeniden adlandırılarak .system\_old'a alınır (Windows buna izin verir), bir sonraki açılışta silinir.
+# Herhangi bir adım başarısız olursa önceki dosyalar geri yüklenir.
+function Install-UpdateFromFolder {
+    param([string]$Source)
+    $root = Find-ReleaseRoot $Source
+    if (-not $root) { throw 'İndirilen paket beklenen dosyaları içermiyor' }
+    $coreText = Get-Content -LiteralPath (Join-Path $root '.system\Core.ps1') -Raw -Encoding UTF8
+    if ($coreText -notmatch "AppVersion\s*=\s*'([0-9.]+)'") { throw 'Yeni sürüm numarası okunamadı' }
+    $newVersion = $Matches[1]
+
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $old = Join-Path $script:SystemFolder '_old'
+    $backup = Join-Path $old "backup-$stamp"
+    New-Item -ItemType Directory -Path $backup -Force | Out-Null
+    $skip = @($script:DataFiles) + @('_old', 'cleanup-v1.log')
+
+    # Yedek: mevcut sistem dosyaları + exe
+    foreach ($item in Get-ChildItem -LiteralPath $script:SystemFolder -Force) {
+        if ($skip -contains $item.Name) { continue }
+        Copy-Item -LiteralPath $item.FullName -Destination $backup -Recurse -Force
+    }
+    $movedExe = $null
+    try {
+        if (Test-Path -LiteralPath $script:AppExe) {
+            $movedExe = Join-Path $old "app-$stamp.exe"
+            Move-Item -LiteralPath $script:AppExe -Destination $movedExe -Force
+        }
+        Copy-Item -LiteralPath (Join-Path $root $script:AppExeName) -Destination $script:AppExe -Force
+        foreach ($item in Get-ChildItem -LiteralPath (Join-Path $root '.system') -Force) {
+            if ($skip -contains $item.Name) { continue }
+            Copy-Item -LiteralPath $item.FullName -Destination $script:SystemFolder -Recurse -Force
+        }
+        Get-ChildItem -LiteralPath $script:SystemFolder -Recurse -Force -File -ErrorAction SilentlyContinue |
+            Unblock-File -ErrorAction SilentlyContinue
+        Unblock-File -LiteralPath $script:AppExe -ErrorAction SilentlyContinue
+    }
+    catch {
+        $err = $_.Exception.Message
+        foreach ($item in Get-ChildItem -LiteralPath $backup -Force) {
+            Copy-Item -LiteralPath $item.FullName -Destination $script:SystemFolder -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        if ($movedExe -and (Test-Path -LiteralPath $movedExe)) {
+            if (Test-Path -LiteralPath $script:AppExe) { Remove-Item -LiteralPath $script:AppExe -Force -ErrorAction SilentlyContinue }
+            Move-Item -LiteralPath $movedExe -Destination $script:AppExe -Force -ErrorAction SilentlyContinue
+        }
+        Write-Log "Guncelleme basarisiz, onceki surum geri yuklendi: $err"
+        throw "Güncelleme kurulamadı, önceki sürüm geri yüklendi: $err"
+    }
+    Write-Log "Guncellendi: $script:AppVersion -> $newVersion"
+    return $newVersion
+}
+
+# İndirilen ZIP'i geçici klasöre açar ve kurar.
+function Install-UpdateFromZip {
+    param([string]$ZipPath)
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("stfc-update-" + [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $tmp)
+        return Install-UpdateFromFolder $tmp
+    }
+    finally {
+        Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $ZipPath -Force -ErrorAction SilentlyContinue
+    }
 }
 #endregion

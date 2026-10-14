@@ -23,8 +23,8 @@ using System.Windows.Forms;
 [assembly: AssemblyProduct("Kısa Süreli Dosya Temizleyici")]
 [assembly: AssemblyCompany("Umut Zaif")]
 [assembly: AssemblyCopyright("MIT License - github.com/umutzaif/short-term-file-cleaner")]
-[assembly: AssemblyVersion("3.1.0.0")]
-[assembly: AssemblyFileVersion("3.1.0.0")]
+[assembly: AssemblyVersion("3.2.0.0")]
+[assembly: AssemblyFileVersion("3.2.0.0")]
 
 static class Program
 {

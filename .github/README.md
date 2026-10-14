@@ -7,7 +7,7 @@
 **Masaüstündeki geçici dosyalarınızı unutun. Süresi yaklaşanları size sorar, süresi dolanları kendisi temizler.**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/sürüm-3.1.0-7c5cff.svg)](../.system/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/sürüm-3.2.0-7c5cff.svg)](../.system/CHANGELOG.md)
 [![License](https://img.shields.io/badge/lisans-MIT-green.svg)](../.system/LICENSE)
 
 </div>
@@ -56,10 +56,31 @@ Oturum açıldığında incelenecek dosya varsa uygulama bu sayfayla açılır. 
 |:---:|:---:|:---:|
 | ![Onay](screenshots/silme-onay.png) | ![İlerleme](screenshots/silme-ilerleme.png) | ![Sonuç](screenshots/silme-tamam.png) |
 
-### Ayarlar
-Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği, açılış davranışı, masaüstü kısayolu ve klasör simgesi.
+### Ayarlar ve tema
+Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği, açılış davranışı, masaüstü kısayolu, klasör simgesi ve **tema**. Tema seçenekleri: **Gece**, **Gündüz** ya da Windows'un renk ayarını izleyen **Sistem**.
 
 ![Ayarlar](screenshots/ayarlar.png)
+
+| Gündüz teması |
+|:---:|
+| ![Gündüz teması](screenshots/genel-bakis-gunduz.png) |
+
+---
+
+## 🔄 Güncellemeler
+
+Yeni bir sürüm çıktığında uygulamayı silip yeniden indirmeniz **gerekmez**:
+
+1. Uygulama her açıldığında GitHub'daki son sürümü arka planda denetler.
+2. Yeni sürüm varsa **Genel Bakış**'ta yeşil bir **Güncelle** düğmesi belirir. Hakkında sayfasında da sürüm notları görünür.
+3. Düğmeye basınca yeni sürüm indirilir, yerine kurulur ve uygulama kendini yeniden başlatır.
+
+Ayarlarınız, korunan dosya listeniz, işlem geçmişiniz ve klasördeki dosyalarınız korunur. Kurulum sırasında bir sorun olursa önceki sürüm otomatik olarak geri yüklenir. Güncelseniz Hakkında sayfasında **"Sürüm x.x.x · Güncel"** yazar.
+
+![Hakkında](screenshots/hakkinda.png)
+
+> **3.1.0 veya daha eski bir sürüm kullanıyorsanız:** Bu sürümlerde güncelleyici yok. Bir kereliğine yeni sürümü indirip `Dosya Temizleyici.exe`'yi çalıştırın; ayarlarınız korunarak kurulur. Sonraki sürümler otomatik gelir.
+
 
 ---
 
@@ -71,6 +92,8 @@ Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği, açılı
 - **Dosya koruma:** Önemli dosyalarınızı kalıcı olarak koruyun
 - **Geri Dönüşüm Kutusu desteği:** İsterseniz dosyalar kalıcı silinmek yerine Geri Dönüşüm Kutusu'na gider
 - **Korunan sistem dosyaları:** Uygulamanın kendi dosyaları gizli `.system` klasöründedir. Listelerde görünmez, silinemez ve korumaları değiştirilemez
+- **Tema seçimi:** Gece, Gündüz veya Windows ayarını izleyen Sistem teması
+- **Uygulama içi güncelleme:** Yeni sürüm tek tıkla kurulur, ayarlar ve dosyalar korunur
 - **İşlem geçmişi:** Yapılan her silme ve koruma işlemi kaydedilir
 
 ---
@@ -101,6 +124,7 @@ Masaüstü\short-term-files\
 | Bir dosya silinmedi | Başka bir programda açık olabilir. Ayrıntılar **Geçmiş** sayfasında |
 | Açılışta her gün açılmasın | **Ayarlar → Oturum açılışında her zaman göster** seçeneğini kapatın; uygulama yalnızca incelenecek dosya olduğunda açılır |
 | Otomatik başlatmayı kaldırmak | **Genel Bakış → Otomatik başlatma → Kapat** |
+| Güncelleme denetlenemedi | İnternet bağlantınızı kontrol edip **Hakkında → Denetle**'ye basın |
 | Uygulama açılmıyor | `.system\error.log` dosyasına bakın ve bir [sorun bildirin](https://github.com/umutzaif/short-term-file-cleaner/issues) |
 
 ---

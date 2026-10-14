@@ -1,4 +1,4 @@
-﻿# Kısa Süreli Dosya Temizleyici v3.1
+﻿# Kısa Süreli Dosya Temizleyici v3.2
 # Ana uygulama: Genel Bakış, İnceleme (Sil / Koru / Atla), Korunanlar, Ayarlar, Geçmiş, Hakkında
 # GitHub: https://github.com/umutzaif/short-term-file-cleaner
 #
@@ -72,6 +72,13 @@ if ($Startup) {
 #endregion
 
 #region Tema ve yardımcılar
+$script:ThemeSetting = (Get-Config).theme
+$useDark = switch ($script:ThemeSetting) {
+    'light' { $false }
+    'system' { [StfcUi.Theme]::SystemPrefersDark() }
+    default { $true }
+}
+if (-not $useDark) { [StfcUi.Theme]::ApplyLight() }
 $screenDpi = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero).DpiX
 [StfcUi.Theme]::Scale = $screenDpi / 96
 $installedFonts = (New-Object System.Drawing.Text.InstalledFontCollection).Families | ForEach-Object { $_.Name }
@@ -90,7 +97,16 @@ $G = @{}
     Delete = 0xE74D; Folder = 0xE838; Refresh = 0xE72C; Skip = 0xE893; Add = 0xE710; Check = 0xE73E
     Clock = 0xE823; Files = 0xE8B7; Broom = 0xE75C; Power = 0xE7E8; Link = 0xE71B; Open = 0xE8E5
     Warn = 0xE7BA; Fire = 0xE945; Recycle = 0xE74D; Calendar = 0xE787; Bug = 0xEBE8; Clear = 0xE894
+    Download = 0xE896; Sync = 0xE895; Moon = 0xE708; Sun = 0xE706; Monitor = 0xE7F4
 }.GetEnumerator() | ForEach-Object { $G[$_.Key] = [string][char]$_.Value }
+
+function Get-HeroColor {
+    param([int]$Stop)
+    if ([StfcUi.Theme]::IsDark) {
+        if ($Stop -eq 1) { return [StfcUi.Gfx]::Mix($C.Card, $C.Accent, 0.45) } else { return [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.30) }
+    }
+    if ($Stop -eq 1) { return [StfcUi.Gfx]::Mix($C.Accent, [System.Drawing.Color]::Black, 0.08) } else { return [StfcUi.Gfx]::Mix($C.Accent2, $C.Accent, 0.35) }
+}
 
 function New-UiFont {
     param([float]$Size, [string]$Family = 'Segoe UI', [string]$Style = 'Regular')
@@ -266,7 +282,7 @@ foreach ($def in $navDefs) {
 
 # Kenar çubuğu alt kısmı: otomatik başlatma durumu
 $sideStatus = New-Card 74 14
-$sideStatus.Fill = [StfcUi.Gfx]::Mix($C.Side, [System.Drawing.Color]::White, 0.03)
+$sideStatus.Fill = [StfcUi.Gfx]::Mix($C.Side, [StfcUi.Theme]::Overlay, 0.03)
 $sideStatus.Radius = 12
 Add-Dock $side $sideStatus 'Bottom'
 $sideVersion = New-Label "v$script:AppVersion" (New-UiFont 8.5) $C.Muted 'MiddleCenter'
@@ -379,6 +395,9 @@ $dash.Actions.Controls.Add((New-Button 'Şimdi Temizle' $G.Broom 'Solid' $C.Acce
 $dash.Actions.Controls.Add((New-Button 'Klasörü Aç' $G.Folder 'Ghost' $C.Accent 140 40 {
             Start-Process explorer.exe -ArgumentList "`"$script:BaseFolder`""
         }))
+$btnDashUpdate = New-Button 'Güncelle' $G.Download 'Solid' $C.Success 190 40 { Start-UpdateInstall }
+$btnDashUpdate.Visible = $false
+$dash.Actions.Controls.Add($btnDashUpdate)
 
 $tiles = New-Object System.Windows.Forms.TableLayoutPanel
 $tiles.Height = 134
@@ -776,7 +795,7 @@ $sep.Anchor = 'Top,Left,Right'
 $durCard.Controls.Add($sep)
 New-SettingRow $durCard 'Otomatik silme süresi' 'Bu kadar gün eski dosyalar (korunanlar hariç) oturum açılışında otomatik silinir.' 112
 $numDel = New-DayInput $durCard 112
-$durPreview = New-Label '' (New-UiFont 9.5 'Segoe UI Semibold') ([StfcUi.Gfx]::Mix($C.Accent, [System.Drawing.Color]::White, 0.35)) 'MiddleLeft'
+$durPreview = New-Label '' (New-UiFont 9.5 'Segoe UI Semibold') ([StfcUi.Theme]::Tint($C.Accent, 0.35)) 'MiddleLeft'
 $durPreview.SetBounds(22, 178, 900, 30)
 $durCard.Controls.Add($durPreview)
 Add-Dock $set.Page $durCard 'Top'
@@ -790,7 +809,7 @@ function Update-DurationPreview {
     }
     else {
         $durPreview.Text = "0–$($w - 1) gün: yeni   ›   $w–$($d - 1) gün: inceleme   ›   $d+ gün: otomatik silinir"
-        $durPreview.ForeColor = [StfcUi.Gfx]::Mix($C.Accent, [System.Drawing.Color]::White, 0.35)
+        $durPreview.ForeColor = [StfcUi.Theme]::Tint($C.Accent, 0.35)
     }
 }
 $numWarn.Add_ValueChanged({ Update-DurationPreview })
@@ -816,7 +835,24 @@ $togStartup.Anchor = 'Top,Right'
 $recCard.Controls.Add($togStartup)
 Add-Dock $set.Page $recCard 'Top'
 
-Add-Spacer $set.Page 20
+Add-Spacer $set.Page 16
+$themeCard = New-Card 90 0
+$themeCard.Width = 980
+New-SettingRow $themeCard 'Tema' 'Uygulamanın görünümünü seçin; uygulama yeni temayla yeniden açılır.' 20
+$script:ThemeButtons = @()
+$themeDefs = @(@('dark', 'Gece', $G.Moon, 600), @('light', 'Gündüz', $G.Sun, 718), @('system', 'Sistem', $G.Monitor, 836))
+foreach ($td in $themeDefs) {
+    $tb = New-Button $td[1] $td[2] 'Ghost' $C.Accent 110 40 { Set-AppTheme ([string]$this.Tag) }
+    $tb.Tag = $td[0]
+    $tb.Selected = ($script:ThemeSetting -eq $td[0])
+    $tb.SetBounds($td[3], 25, 110, 40)
+    $tb.Anchor = 'Top,Right'
+    $themeCard.Controls.Add($tb)
+    $script:ThemeButtons += $tb
+}
+Add-Dock $set.Page $themeCard 'Top'
+
+Add-Spacer $set.Page 12
 $setBar = New-Object System.Windows.Forms.FlowLayoutPanel
 $setBar.Height = 44
 $setBar.WrapContents = $false
@@ -852,6 +888,19 @@ $btnFolderIcon = New-Button 'Klasör simgesi' $G.Folder 'Ghost' $C.Accent 170 42
 }
 $btnFolderIcon.Margin = New-Object System.Windows.Forms.Padding(0)
 $setBar.Controls.Add($btnFolderIcon)
+
+function Set-AppTheme {
+    param([string]$Theme)
+    if ($Theme -eq $script:ThemeSetting) { return }
+    foreach ($tb in $script:ThemeButtons) { $tb.Selected = ($tb.Tag -eq $Theme) }
+    Save-Config ([pscustomobject]@{ theme = $Theme })
+    Write-Log "Tema degistirildi: $Theme"
+    Show-Toast 'Tema uygulanıyor…' $C.Accent $G.Settings
+    Wait-Ui 700
+    $script:RelaunchExe = $script:AppExe
+    $script:RelaunchArgs = ''
+    $form.Close()
+}
 
 function Update-SettingsView {
     $numDel.Value = [math]::Min(365, [math]::Max(1, $script:Config.deletionDays))
@@ -894,9 +943,9 @@ function Update-LogView {
         }
         else { $msg = $line }
         $color = if ($msg -match 'hata|hatasi') { $C.Warning }
-        elseif ($msg -match '^(Otomatik silindi|Silindi)') { [StfcUi.Gfx]::Mix($C.Danger, [System.Drawing.Color]::White, 0.25) }
+        elseif ($msg -match '^(Otomatik silindi|Silindi)') { [StfcUi.Theme]::Tint($C.Danger, 0.25) }
         elseif ($msg -match '^Korumaya|^Koruma') { $C.Success }
-        elseif ($msg -match '^(Config|Baslangic|Uyari)') { [StfcUi.Gfx]::Mix($C.Accent2, [System.Drawing.Color]::White, 0.2) }
+        elseif ($msg -match '^(Config|Baslangic|Uyari)') { [StfcUi.Theme]::Tint($C.Accent2, 0.2) }
         else { $C.Text }
         $txtLog.SelectionColor = $color
         $txtLog.AppendText($msg + "`n")
@@ -910,8 +959,8 @@ function Update-LogView {
 #region Sayfa: Hakkında
 $about = New-Page 'about' 'Hakkında' 'Geçici dosyalarınızı akıllıca yönetin.'
 $hero = New-Card 170 30
-$hero.Fill = [StfcUi.Gfx]::Mix($C.Card, $C.Accent, 0.45)
-$hero.Fill2 = [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.30)
+$hero.Fill = Get-HeroColor 1
+$hero.Fill2 = Get-HeroColor 2
 $hero.BorderColor = [StfcUi.Gfx]::Mix($C.Border, $C.Accent, 0.4)
 Add-Dock $about.Page $hero 'Top'
 $heroTitle = New-Label 'Kısa Süreli Dosya Temizleyici' (New-UiFont 22 'Segoe UI Semibold') ([System.Drawing.Color]::White)
@@ -923,6 +972,29 @@ Add-Dock $hero $heroVer 'Top'
 $heroDesc = New-Label 'Masaüstündeki short-term-files klasörüne bıraktığınız dosyaları takip eder; süresi yaklaşanları size sorar, süresi dolanları otomatik temizler.' (New-UiFont 10.5) ([System.Drawing.Color]::FromArgb(235, 238, 255)) 'TopLeft'
 $heroDesc.Height = 50
 Add-Dock $hero $heroDesc 'Top'
+
+Add-Spacer $about.Page 18
+$updCard = New-Card 104 0
+$updCard.Width = 1020
+$updIcon = New-Label $G.Sync (New-UiFont 20 ([StfcUi.Theme]::IconFamily)) $C.Muted 'MiddleCenter'
+$updIcon.SetBounds(20, 24, 56, 56)
+$updCard.Controls.Add($updIcon)
+$updTitle = New-Label "Sürüm $script:AppVersion" (New-UiFont 13 'Segoe UI Semibold')
+$updTitle.SetBounds(88, 22, 520, 30)
+$updCard.Controls.Add($updTitle)
+$updSub = New-Label 'Güncellemeler denetleniyor…' (New-UiFont 9.5) $C.Muted
+$updSub.SetBounds(88, 54, 560, 26)
+$updCard.Controls.Add($updSub)
+$btnUpdCheck = New-Button 'Denetle' $G.Refresh 'Ghost' $C.Accent 130 42 { Start-UpdateCheck }
+$btnUpdCheck.SetBounds(712, 31, 130, 42)
+$btnUpdCheck.Anchor = 'Top,Right'
+$updCard.Controls.Add($btnUpdCheck)
+$btnUpdInstall = New-Button 'Güncelle' $G.Download 'Solid' $C.Success 150 42 { Start-UpdateInstall }
+$btnUpdInstall.SetBounds(852, 31, 150, 42)
+$btnUpdInstall.Anchor = 'Top,Right'
+$btnUpdInstall.Visible = $false
+$updCard.Controls.Add($btnUpdInstall)
+Add-Dock $about.Page $updCard 'Top'
 
 Add-Spacer $about.Page 18
 $steps = New-Object System.Windows.Forms.TableLayoutPanel
@@ -960,6 +1032,140 @@ $linkBar.Controls.Add($btnRepo)
 $btnIssue = New-Button 'Sorun bildir' $G.Bug 'Ghost' $C.Accent 150 42 { Start-Process "$script:RepoUrl/issues" }
 $btnIssue.Margin = New-Object System.Windows.Forms.Padding(0)
 $linkBar.Controls.Add($btnIssue)
+#endregion
+
+#region Güncelleme
+function Get-NotesSummary {
+    param([string]$Notes)
+    foreach ($line in ($Notes -split "`n")) {
+        $t = ($line -replace '^[\s#>*\-]+', '' -replace '\*\*', '').Trim()
+        if ($t) { return $t }
+    }
+    return ''
+}
+
+function Set-UpdateState {
+    param([string]$State, [string]$Detail = '')
+    $script:UpdateState = $State
+    $btnUpdCheck.Enabled = ($State -notin 'checking', 'downloading')
+    $btnUpdInstall.Enabled = ($State -eq 'available')
+    $btnUpdInstall.Visible = ($State -in 'available', 'downloading')
+    $btnDashUpdate.Visible = ($State -in 'available', 'downloading')
+    $btnDashUpdate.Enabled = ($State -eq 'available')
+    switch ($State) {
+        'checking' {
+            $updIcon.Text = $G.Sync; $updIcon.ForeColor = $C.Muted
+            $updTitle.Text = "Sürüm $script:AppVersion"
+            $updSub.Text = 'Güncellemeler denetleniyor…'
+        }
+        'current' {
+            $updIcon.Text = $G.Check; $updIcon.ForeColor = $C.Success
+            $updTitle.Text = "Sürüm $script:AppVersion · Güncel"
+            $updSub.Text = "En son sürümü kullanıyorsunuz · son denetim $(Get-Date -Format 'HH:mm')"
+        }
+        'available' {
+            $v = $script:Release.Version
+            $updIcon.Text = $G.Download; $updIcon.ForeColor = $C.Success
+            $updTitle.Text = "Yeni sürüm $v hazır"
+            $summary = Get-NotesSummary $script:Release.Notes
+            $updSub.Text = "Kullandığınız sürüm $script:AppVersion" + $(if ($summary) { " · $summary" } else { '' })
+            $btnUpdInstall.Text = 'Güncelle'
+            $btnDashUpdate.Text = "Güncelle · v$v"
+        }
+        'downloading' {
+            $updIcon.Text = $G.Download; $updIcon.ForeColor = $C.Accent
+            $updSub.Text = "Sürüm $($script:Release.Version) indiriliyor… ayarlarınız ve dosyalarınız korunur."
+            $btnUpdInstall.Text = 'İndiriliyor…'
+            $btnDashUpdate.Text = 'Güncelleniyor…'
+        }
+        'error' {
+            $updIcon.Text = $G.Warn; $updIcon.ForeColor = $C.Warning
+            $updTitle.Text = "Sürüm $script:AppVersion"
+            $updSub.Text = $(if ($Detail) { $Detail } else { 'Güncellemeler denetlenemedi. İnternet bağlantınızı kontrol edip yeniden deneyin.' })
+        }
+    }
+}
+
+# GitHub'daki son sürümü arayüzü dondurmadan denetler (istek arka planda, sonuç zamanlayıcıyla okunur).
+function Start-UpdateCheck {
+    if ($script:UpdateState -in 'checking', 'downloading') { return }
+    Set-UpdateState 'checking'
+    try {
+        $script:UpdateClient = New-UpdateClient
+        $script:UpdateTask = $script:UpdateClient.DownloadStringTaskAsync($script:UpdateApi)
+        $script:UpdatePoll.Start()
+    }
+    catch { Set-UpdateState 'error' }
+}
+
+$script:UpdatePoll = New-Object System.Windows.Forms.Timer
+$script:UpdatePoll.Interval = 200
+$script:UpdatePoll.Add_Tick({
+        $t = $script:UpdateTask
+        if (-not $t -or -not $t.IsCompleted) { return }
+        $script:UpdatePoll.Stop()
+        $script:UpdateTask = $null
+        try { $script:UpdateClient.Dispose() } catch { }
+        if ($t.IsFaulted) {
+            $ex = $t.Exception.InnerException
+            # 404: henüz yayınlanmış bir sürüm yok, yani kullanılan sürüm güncel
+            if ($ex -is [System.Net.WebException] -and $ex.Response -and [int]$ex.Response.StatusCode -eq 404) { Set-UpdateState 'current' }
+            else { Set-UpdateState 'error' }
+            return
+        }
+        try {
+            $script:Release = Read-ReleaseInfo $t.Result
+            if ($script:Release.Available) {
+                Set-UpdateState 'available'
+                Write-Log "Yeni surum mevcut: $($script:Release.Version)"
+            }
+            else { Set-UpdateState 'current' }
+        }
+        catch { Set-UpdateState 'error' }
+    })
+
+function Start-UpdateInstall {
+    if ($script:UpdateState -ne 'available' -or -not $script:Release) { return }
+    $ans = [System.Windows.Forms.MessageBox]::Show(
+        "Sürüm $($script:Release.Version) indirilip kurulacak ve uygulama yeniden başlatılacak.`n`nAyarlarınız, korunan dosya listeniz ve klasördeki dosyalarınız korunur.",
+        'Güncelleme', 'OKCancel', 'Information')
+    if ($ans -ne 'OK') { return }
+    Set-UpdateState 'downloading'
+    $script:UpdateZip = Join-Path ([System.IO.Path]::GetTempPath()) ("stfc-$($script:Release.Version)-" + [guid]::NewGuid().ToString('N') + '.zip')
+    try {
+        $script:DownloadClient = New-UpdateClient
+        $script:DownloadTask = $script:DownloadClient.DownloadFileTaskAsync($script:Release.ZipUrl, $script:UpdateZip)
+        $script:DownloadPoll.Start()
+    }
+    catch { Set-UpdateState 'available'; Show-Toast 'İndirme başlatılamadı' $C.Danger $G.Warn }
+}
+
+$script:DownloadPoll = New-Object System.Windows.Forms.Timer
+$script:DownloadPoll.Interval = 200
+$script:DownloadPoll.Add_Tick({
+        $t = $script:DownloadTask
+        if (-not $t -or -not $t.IsCompleted) { return }
+        $script:DownloadPoll.Stop()
+        $script:DownloadTask = $null
+        try { $script:DownloadClient.Dispose() } catch { }
+        if ($t.IsFaulted) {
+            Set-UpdateState 'available'
+            Show-Toast 'Güncelleme indirilemedi. İnternet bağlantınızı kontrol edin.' $C.Danger $G.Warn
+            return
+        }
+        try {
+            $v = Install-UpdateFromZip $script:UpdateZip
+            Show-Toast "Sürüm $v kuruldu · uygulama yeniden başlatılıyor" $C.Success $G.Check
+            Wait-Ui 1200
+            $script:RelaunchExe = $script:AppExe
+            $script:RelaunchArgs = ''
+            $form.Close()
+        }
+        catch {
+            Set-UpdateState 'available'
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Güncelleme', 'OK', 'Warning') | Out-Null
+        }
+    })
 #endregion
 
 #region Veri yenileme
@@ -1079,8 +1285,8 @@ function Show-SetupDialog {
 
     $hero = New-Card 150 0
     $hero.SetBounds(20, 20, 520, 150)
-    $hero.Fill = [StfcUi.Gfx]::Mix($C.Card, $C.Accent, 0.40)
-    $hero.Fill2 = [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.28)
+    $hero.Fill = Get-HeroColor 1
+    $hero.Fill2 = Get-HeroColor 2
     $hero.BorderColor = [StfcUi.Gfx]::Mix($C.Border, $C.Accent, 0.4)
     $dlg.Controls.Add($hero)
     $pic = New-Object System.Windows.Forms.PictureBox
@@ -1193,6 +1399,7 @@ $form.Add_Shown({
         $deferred.Add_Tick({
                 $this.Stop()
                 Update-TaskStatus
+                Start-UpdateCheck
                 # Bu klasörde eski sürümle kurulmuş görevi yeni exe'ye taşı (başka konumdaki kurulumlara dokunma)
                 if ($script:TaskInfo -and -not $script:TaskInfo.IsCurrent -and $script:TaskInfo.BelongsHere) {
                     try { Install-CleanupTask; Update-TaskStatus }
@@ -1216,5 +1423,8 @@ $form.MinimumSize = New-Object System.Drawing.Size([StfcUi.Theme]::S(1060), [Stf
 [void]$form.ShowDialog()
 try { $script:InstanceMutex.ReleaseMutex() } catch { }
 # Kurulum masaüstüne taşındıysa yeni konumdaki uygulamayı başlat
-if ($script:RelaunchExe) { Start-Process -FilePath $script:RelaunchExe -ArgumentList $script:RelaunchArgs }
+if ($script:RelaunchExe) {
+    if ($script:RelaunchArgs) { Start-Process -FilePath $script:RelaunchExe -ArgumentList $script:RelaunchArgs }
+    else { Start-Process -FilePath $script:RelaunchExe }
+}
 #endregion
