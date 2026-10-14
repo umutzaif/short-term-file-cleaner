@@ -7,7 +7,7 @@
 **Masaüstündeki geçici dosyalarınızı unutun. Süresi yaklaşanları size sorar, süresi dolanları kendisi temizler.**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/sürüm-3.3.0-7c5cff.svg)](../.system/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/sürüm-3.4.0-7c5cff.svg)](../.system/CHANGELOG.md)
 [![License](https://img.shields.io/badge/lisans-MIT-green.svg)](../.system/LICENSE)
 
 </div>
@@ -104,6 +104,7 @@ Ayarlarınız, korunan dosya listeniz, işlem geçmişiniz ve klasördeki dosyal
 - **Dosya koruma:** Önemli dosyalarınızı kalıcı olarak koruyun
 - **Geri Dönüşüm Kutusu desteği:** İsterseniz dosyalar kalıcı silinmek yerine Geri Dönüşüm Kutusu'na gider
 - **Korunan sistem dosyaları:** Uygulamanın kendi dosyaları gizli `.system` klasöründedir. Listelerde görünmez, silinemez ve korumaları değiştirilemez
+- **Kazanılan alan istatistiği:** Silinen dosyaların toplam boyutu Genel Bakış'ta birikir ("2,6 GB · 214 dosya temizlendi · bu ay 412 MB")
 - **Ek klasörler:** İndirilenler gibi başka klasörleri de takip ettirin
 - **Tema seçimi:** Gece, Gündüz veya Windows ayarını izleyen Sistem teması
 - **Uygulama içi güncelleme:** Yeni sürüm tek tıkla kurulur, ayarlar ve dosyalar korunur

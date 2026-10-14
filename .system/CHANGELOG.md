@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.4.0] - 2026-10-14
+
+### Added
+- **Kazanılan alan istatistiği**: Genel Bakış'ta yeni "Kazanılan alan" kartı; silinen dosyaların toplam boyutu,
+  temizlenen dosya sayısı ve bu ayki kazanç ("2,6 GB · 214 dosya temizlendi · bu ay 412 MB").
+  - Hem Sil düğmesiyle hem otomatik temizlikle gerçekten silinen dosyalar sayılır; silinemeyenler sayılmaz.
+  - Veriler `.system\stats.json`'da tutulur (aylık döküm son 24 ay); güncellemelerde ve masaüstüne kurulumda korunur.
+  - Sayaç bu sürümle başlar: önceki silmelerin boyutları kayıtlı olmadığından geriye dönük hesaplanmaz.
+- Silme özeti penceresi bu silmeyle birlikte toplam kazanılan alanı da gösterir.
+
 ## [3.3.0] - 2026-10-14
 
 ### Added

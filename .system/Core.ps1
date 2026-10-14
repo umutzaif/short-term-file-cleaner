@@ -2,7 +2,7 @@
 # MainApp.ps1, Install.ps1, Uninstall.ps1 ve build\Build.ps1 tarafından dot-source edilir.
 # Not: Tüm dosya işlemleri -LiteralPath kullanır; köşeli parantez içeren adlar ([ ]) joker karakter sayılmaz.
 
-$script:AppVersion    = '3.3.0'
+$script:AppVersion    = '3.4.0'
 $script:AppTitle      = 'Kısa Süreli Dosya Temizleyici'
 $script:RepoUrl       = 'https://github.com/umutzaif/short-term-file-cleaner'
 $script:UpdateApi     = 'https://api.github.com/repos/umutzaif/short-term-file-cleaner/releases/latest'
@@ -15,6 +15,7 @@ $script:FolderIcon    = Join-Path $script:AssetsFolder 'folder.ico'
 $script:ConfigFile    = Join-Path $script:SystemFolder 'config.json'
 $script:ProtectedFile = Join-Path $script:SystemFolder 'protected-files.json'
 $script:LogFile       = Join-Path $script:SystemFolder 'cleanup.log'
+$script:StatsFile     = Join-Path $script:SystemFolder 'stats.json'
 $script:AppExeName    = 'Dosya Temizleyici.exe'
 $script:AppExe        = Join-Path $script:BaseFolder $script:AppExeName
 $script:TaskName      = 'ShortTermFileCleaner'
@@ -27,7 +28,7 @@ $script:AppDirs  = @('.system', '.git', '.github')
 $script:AppFiles = @($script:AppExeName, '.gitignore', 'desktop.ini')
 # Eski sürümlerin kökte bıraktığı uygulama dosyaları (koruma listesinden temizlenir)
 $script:LegacyRootFiles = @('MainApp.ps1', 'README.md', 'LICENSE', 'CHANGELOG.md', '.gitignore', 'cleanup.log')
-$script:DataFiles = @('config.json', 'protected-files.json', 'cleanup.log', 'error.log')
+$script:DataFiles = @('config.json', 'protected-files.json', 'cleanup.log', 'error.log', 'stats.json')
 
 #region Log
 function Write-Log {
@@ -329,6 +330,52 @@ function Get-ManagedFiles {
 }
 #endregion
 
+#region Temizlik istatistikleri
+# Gerçekten silinen dosyaların toplam boyutu ve sayısı (.system\stats.json). Aylık döküm son 24 ay tutulur.
+function Get-CleanupStats {
+    $data = $null
+    if (Test-Path -LiteralPath $script:StatsFile) {
+        try { $data = Get-Content -LiteralPath $script:StatsFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { }
+    }
+    $month = Get-Date -Format 'yyyy-MM'
+    $months = @()
+    if ($data -and $data.months) {
+        $months = @($data.months | Where-Object { $_.month } | ForEach-Object {
+                [pscustomobject]@{ month = [string]$_.month; bytes = [long]$_.bytes; files = [int]$_.files }
+            })
+    }
+    $current = $months | Where-Object { $_.month -eq $month } | Select-Object -First 1
+    [pscustomobject]@{
+        TotalBytes = $(if ($data) { [long]$data.totalBytes } else { [long]0 })
+        TotalFiles = $(if ($data) { [int]$data.totalFiles } else { 0 })
+        Since      = $(if ($data -and $data.since) { [string]$data.since } else { '' })
+        MonthBytes = $(if ($current) { $current.bytes } else { [long]0 })
+        MonthFiles = $(if ($current) { $current.files } else { 0 })
+        Months     = $months
+    }
+}
+
+function Add-CleanupStats {
+    param([long]$Bytes, [int]$Files)
+    $stats = Get-CleanupStats
+    $month = Get-Date -Format 'yyyy-MM'
+    $months = New-Object System.Collections.ArrayList
+    $found = $false
+    foreach ($m in $stats.Months) {
+        if ($m.month -eq $month) { $m.bytes += $Bytes; $m.files += $Files; $found = $true }
+        [void]$months.Add([ordered]@{ month = $m.month; bytes = [long]$m.bytes; files = [int]$m.files })
+    }
+    if (-not $found) { [void]$months.Add([ordered]@{ month = $month; bytes = $Bytes; files = $Files }) }
+    $kept = @($months | Sort-Object { $_.month } | Select-Object -Last 24)
+    Write-JsonFile $script:StatsFile ([ordered]@{
+            totalBytes = [long]($stats.TotalBytes + $Bytes)
+            totalFiles = [int]($stats.TotalFiles + $Files)
+            since      = $(if ($stats.Since) { $stats.Since } else { Get-Date -Format 'yyyy-MM-dd' })
+            months     = $kept
+        })
+}
+#endregion
+
 #region Silme
 function Remove-ManagedFile {
     param([string]$FullPath, [bool]$Recycle)
@@ -373,8 +420,11 @@ function Remove-Files {
         }
         if ($OnProgress) { & $OnProgress $path (-not $err) $err }
     }
+    if ($deleted -gt 0) {
+        try { Add-CleanupStats -Bytes $freed -Files $deleted } catch { Write-Log "Istatistik kaydedilemedi: $($_.Exception.Message)" }
+    }
     if ($Paths.Count -gt 0) {
-        Write-Log "Silme islemi tamamlandi. Silinen: $deleted, Hata: $($failed.Count)"
+        Write-Log "Silme islemi tamamlandi. Silinen: $deleted, Hata: $($failed.Count), Acilan alan: $freed bayt"
         [void](Remove-EmptyFolders)
     }
     [pscustomobject]@{ Deleted = $deleted; Freed = $freed; Failed = $failed.ToArray() }

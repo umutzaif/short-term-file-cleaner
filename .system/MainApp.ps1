@@ -1,4 +1,4 @@
-﻿# Kısa Süreli Dosya Temizleyici v3.3
+﻿# Kısa Süreli Dosya Temizleyici v3.4
 # Ana uygulama: Genel Bakış, İnceleme (Sil / Koru / Atla), Korunanlar, Ayarlar, Geçmiş, Hakkında
 # GitHub: https://github.com/umutzaif/short-term-file-cleaner
 #
@@ -97,7 +97,7 @@ $G = @{}
     Delete = 0xE74D; Folder = 0xE838; Refresh = 0xE72C; Skip = 0xE893; Add = 0xE710; Check = 0xE73E
     Clock = 0xE823; Files = 0xE8B7; Broom = 0xE75C; Power = 0xE7E8; Link = 0xE71B; Open = 0xE8E5
     Warn = 0xE7BA; Fire = 0xE945; Recycle = 0xE74D; Calendar = 0xE787; Bug = 0xEBE8; Clear = 0xE894
-    Download = 0xE896; Sync = 0xE895; Moon = 0xE708; Sun = 0xE706; Monitor = 0xE7F4
+    Download = 0xE896; Sync = 0xE895; Moon = 0xE708; Sun = 0xE706; Monitor = 0xE7F4; Drive = 0xEDA2
 }.GetEnumerator() | ForEach-Object { $G[$_.Key] = [string][char]$_.Value }
 
 function Get-HeroColor {
@@ -426,8 +426,26 @@ $tileSoon = New-Tile 'Yakında silinecek' $G.Clock $C.Danger 2
 $tileProt = New-Tile 'Korunan' $G.Shield $C.Success 3
 
 Add-Spacer $dash.Page 18
+# Yaşam döngüsü (sol) + kazanılan alan (sağ)
+$lifeRow = New-Object System.Windows.Forms.TableLayoutPanel
+$lifeRow.Height = 140
+$lifeRow.ColumnCount = 2
+$lifeRow.RowCount = 1
+[void]$lifeRow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 62)))
+[void]$lifeRow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 38)))
+[void]$lifeRow.RowStyles.Add((New-Object System.Windows.Forms.RowStyle('Percent', 100)))
+Add-Dock $dash.Page $lifeRow 'Top'
 $lifeCard = New-Card 140 22
-Add-Dock $dash.Page $lifeCard 'Top'
+$lifeCard.Dock = 'Fill'
+$lifeCard.Margin = New-Object System.Windows.Forms.Padding(0, 0, 16, 0)
+$lifeRow.Controls.Add($lifeCard, 0, 0)
+$tileSaved = New-Object StfcUi.StatTile
+$tileSaved.Title = 'Kazanılan alan'
+$tileSaved.Glyph = $G.Drive
+$tileSaved.Accent = $C.Success
+$tileSaved.Dock = 'Fill'
+$tileSaved.Margin = New-Object System.Windows.Forms.Padding(0)
+$lifeRow.Controls.Add($tileSaved, 1, 0)
 $lifeTitle = New-Label 'Dosya yaşam döngüsü' (New-UiFont 11 'Segoe UI Semibold')
 $lifeTitle.Height = 28
 Add-Dock $lifeCard $lifeTitle 'Top'
@@ -571,7 +589,7 @@ function Invoke-DeleteFlow {
             $freed = Format-Size $r.Freed
             if ($r.Failed.Count -eq 0) {
                 $title = 'Temizlik tamamlandı'
-                $sub = "$($r.Deleted) dosya silindi · $freed yer açıldı"
+                $sub = "$($r.Deleted) dosya silindi · $freed yer açıldı · toplam $(Format-Size (Get-CleanupStats).TotalBytes)"
             }
             else {
                 $title = 'Kısmen tamamlandı'
@@ -1275,6 +1293,16 @@ function Update-Dashboard {
     $tileSoon.Sub = '2 gün içinde otomatik silinecek'
     $tileProt.Value = "$protectedFiles"
     $tileProt.Sub = 'Otomatik silmeden muaf'
+
+    $stats = Get-CleanupStats
+    if ($stats.TotalFiles -gt 0) {
+        $tileSaved.Value = Format-Size $stats.TotalBytes
+        $tileSaved.Sub = "$($stats.TotalFiles) dosya temizlendi · bu ay $(Format-Size $stats.MonthBytes)"
+    }
+    else {
+        $tileSaved.Value = '0 MB'
+        $tileSaved.Sub = 'Silinen dosyaların boyutu burada birikir'
+    }
 
     $lifeBar.SetData(
         [int[]]@($fresh, ($warn.Count - $soon.Count), ($soon.Count + $expired), $protectedFiles),

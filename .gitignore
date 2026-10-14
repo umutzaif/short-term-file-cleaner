@@ -11,6 +11,7 @@
 # Kullaniciya ozel veriler ve uretilen dosyalar
 .system/config.json
 .system/protected-files.json
+.system/stats.json
 .system/*.log
 .system/Launcher.exe
 desktop.ini
