@@ -980,10 +980,10 @@ $updIcon = New-Label $G.Sync (New-UiFont 20 ([StfcUi.Theme]::IconFamily)) $C.Mut
 $updIcon.SetBounds(20, 24, 56, 56)
 $updCard.Controls.Add($updIcon)
 $updTitle = New-Label "Sürüm $script:AppVersion" (New-UiFont 13 'Segoe UI Semibold')
-$updTitle.SetBounds(88, 22, 520, 30)
+$updTitle.SetBounds(88, 22, 440, 30)
 $updCard.Controls.Add($updTitle)
 $updSub = New-Label 'Güncellemeler denetleniyor…' (New-UiFont 9.5) $C.Muted
-$updSub.SetBounds(88, 54, 560, 26)
+$updSub.SetBounds(88, 54, 440, 26)
 $updCard.Controls.Add($updSub)
 $btnUpdCheck = New-Button 'Denetle' $G.Refresh 'Ghost' $C.Accent 130 42 { Start-UpdateCheck }
 $btnUpdCheck.SetBounds(712, 31, 130, 42)
