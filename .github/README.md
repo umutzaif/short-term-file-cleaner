@@ -7,7 +7,7 @@
 **Masaüstündeki geçici dosyalarınızı unutun. Süresi yaklaşanları size sorar, süresi dolanları kendisi temizler.**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/sürüm-3.2.0-7c5cff.svg)](../.system/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/sürüm-3.2.1-7c5cff.svg)](../.system/CHANGELOG.md)
 [![License](https://img.shields.io/badge/lisans-MIT-green.svg)](../.system/LICENSE)
 
 </div>

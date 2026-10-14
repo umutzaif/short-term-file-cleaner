@@ -2,7 +2,7 @@
 # MainApp.ps1, Install.ps1, Uninstall.ps1 ve build\Build.ps1 tarafından dot-source edilir.
 # Not: Tüm dosya işlemleri -LiteralPath kullanır; köşeli parantez içeren adlar ([ ]) joker karakter sayılmaz.
 
-$script:AppVersion    = '3.2.0'
+$script:AppVersion    = '3.2.1'
 $script:AppTitle      = 'Kısa Süreli Dosya Temizleyici'
 $script:RepoUrl       = 'https://github.com/umutzaif/short-term-file-cleaner'
 $script:UpdateApi     = 'https://api.github.com/repos/umutzaif/short-term-file-cleaner/releases/latest'

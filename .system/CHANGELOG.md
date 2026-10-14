@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.2.1] - 2026-10-14
+
+### Fixed
+- Hakkında sayfasındaki güncelleme kartında, yeni sürüm notu uzun olduğunda metin "Denetle" düğmesinin altına
+  taşıyordu; artık sığmayan kısım "…" ile kısaltılıyor.
+
 ## [3.2.0] - 2026-10-14
 
 ### Added
