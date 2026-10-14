@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [3.3.0] - 2026-10-14
+
+### Added
+- **Ek klasörler**: Yeni **Klasörler** sayfasından short-term-files dışındaki klasörler (ör. İndirilenler) takibe
+  alınabilir. Bu klasörlerdeki dosyalar da incelenir, korunabilir ve otomatik temizlenir; İnceleme ekranında
+  hangi klasörden geldikleri görünür.
+  - Eklenen klasördeki dosyaların süresi klasörün eklendiği andan başlar; mevcut dosyalar hemen silinmez.
+  - Sürücü kökleri, Windows/Program Files/AppData ve kullanıcı klasörünün, Masaüstü'nün, Belgeler'in tamamı
+    eklenemez; iç içe veya tekrar eklemeler engellenir.
+  - Silme ve koruma, yalnızca takip edilen klasörlerin içindeki dosyalara izin verir.
+
+### Fixed
+- Ayarlar'daki Tema satırında, pencere dar olduğunda açıklama metni "Gece" düğmesinin üstünü örtüyordu.
+  Ayar satırlarındaki etiketler artık her zaman düğmelerin arkasında kalıyor ve tema açıklaması düğmelerle çakışmıyor.
+
 ## [3.2.1] - 2026-10-14
 
 ### Fixed

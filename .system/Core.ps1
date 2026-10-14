@@ -2,7 +2,7 @@
 # MainApp.ps1, Install.ps1, Uninstall.ps1 ve build\Build.ps1 tarafından dot-source edilir.
 # Not: Tüm dosya işlemleri -LiteralPath kullanır; köşeli parantez içeren adlar ([ ]) joker karakter sayılmaz.
 
-$script:AppVersion    = '3.2.1'
+$script:AppVersion    = '3.3.0'
 $script:AppTitle      = 'Kısa Süreli Dosya Temizleyici'
 $script:RepoUrl       = 'https://github.com/umutzaif/short-term-file-cleaner'
 $script:UpdateApi     = 'https://api.github.com/repos/umutzaif/short-term-file-cleaner/releases/latest'
@@ -57,7 +57,7 @@ function Write-JsonFile {
 }
 
 function Get-Config {
-    $cfg = [ordered]@{ warningDays = 7; deletionDays = 14; useRecycleBin = $false; showOnStartup = $true; setupDone = $false; theme = 'dark' }
+    $cfg = [ordered]@{ warningDays = 7; deletionDays = 14; useRecycleBin = $false; showOnStartup = $true; setupDone = $false; theme = 'dark'; extraFolders = @() }
     if (Test-Path -LiteralPath $script:ConfigFile) {
         try {
             $json = Get-Content -LiteralPath $script:ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -74,6 +74,9 @@ function Get-Config {
         showOnStartup = [bool]$cfg.showOnStartup
         setupDone     = [bool]$cfg.setupDone
         theme         = $(if (@('dark', 'light', 'system') -contains [string]$cfg.theme) { [string]$cfg.theme } else { 'dark' })
+        extraFolders  = @($cfg.extraFolders | Where-Object { $_ -and $_.path } | ForEach-Object {
+                [pscustomobject]@{ path = [string]$_.path; addedAt = [string]$_.addedAt }
+            })
     }
 }
 
@@ -91,6 +94,7 @@ function Save-Config {
             showOnStartup = [bool]$cfg.showOnStartup
             setupDone     = [bool]$cfg.setupDone
             theme         = [string]$cfg.theme
+            extraFolders  = @($cfg.extraFolders)
             lastModified  = (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz')
         })
 }
@@ -106,6 +110,86 @@ function Test-InBaseFolder {
     param([string]$FullPath)
     $prefix = $script:BaseFolder.TrimEnd('\') + '\'
     return $FullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)
+}
+
+function Test-PathUnder {
+    param([string]$Child, [string]$Parent)
+    $c = $Child.TrimEnd('\'); $p = $Parent.TrimEnd('\')
+    return ($c -ieq $p) -or $c.StartsWith($p + '\', [StringComparison]::OrdinalIgnoreCase)
+}
+
+# Taranan kök klasörler: ana short-term-files + kullanıcının eklediği klasörler (var olanlar).
+function Get-ManagedRoots {
+    param($Config = (Get-Config))
+    $roots = @([pscustomobject]@{ Path = $script:BaseFolder.TrimEnd('\'); IsBase = $true; Label = 'short-term-files'; AddedAt = $null })
+    foreach ($e in $Config.extraFolders) {
+        $path = ([string]$e.path).TrimEnd('\')
+        if (-not (Test-Path -LiteralPath $path -PathType Container)) { continue }
+        $added = $null
+        try { $added = [datetime]$e.addedAt } catch { }
+        $roots += [pscustomobject]@{ Path = $path; IsBase = $false; Label = (Split-Path -Leaf $path); AddedAt = $added }
+    }
+    return $roots
+}
+
+# Dosya, yönetilen klasörlerden birinin içinde mi? (silme ve koruma için güvenlik denetimi)
+function Test-InManagedFolder {
+    param([string]$FullPath)
+    if (Test-InBaseFolder $FullPath) { return $true }
+    foreach ($r in Get-ManagedRoots) {
+        if (-not $r.IsBase -and $FullPath.StartsWith($r.Path + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+# Koruma kayıtları: ana klasördekiler göreli, ek klasördekiler tam yol olarak saklanır.
+function Resolve-ProtectedPath {
+    param([string]$Path)
+    if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
+    return (Join-Path $script:BaseFolder $Path)
+}
+
+# Eklenecek klasör güvenli mi? Sorun yoksa $null, varsa açıklama döner.
+function Test-FolderAllowed {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return 'Klasör bulunamadı.' }
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    if ($full -ieq ([System.IO.Path]::GetPathRoot($full)).TrimEnd('\')) { return 'Bir sürücünün tamamı eklenemez; içinde bir klasör seçin.' }
+    foreach ($exact in @([Environment]::GetFolderPath('UserProfile'), [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('MyDocuments'))) {
+        if ($exact -and $full -ieq $exact.TrimEnd('\')) { return 'Bu klasörün tamamı eklenemez; içinde bir alt klasör seçin.' }
+    }
+    foreach ($tree in @($env:SystemRoot, [Environment]::GetFolderPath('ProgramFiles'), [Environment]::GetFolderPath('ProgramFilesX86'),
+            [Environment]::GetFolderPath('CommonApplicationData'), [Environment]::GetFolderPath('ApplicationData'),
+            [Environment]::GetFolderPath('LocalApplicationData'))) {
+        if ($tree -and (Test-PathUnder $full $tree)) { return 'Sistem ve program klasörleri eklenemez.' }
+    }
+    if ((Test-PathUnder $full $script:BaseFolder) -or (Test-PathUnder $script:BaseFolder $full)) {
+        return 'Bu klasör short-term-files ile iç içe; zaten takip ediliyor.'
+    }
+    foreach ($e in (Get-Config).extraFolders) {
+        if ((Test-PathUnder $full $e.path) -or (Test-PathUnder $e.path $full)) { return 'Bu klasör (veya bir üst/alt klasörü) zaten ekli.' }
+    }
+    return $null
+}
+
+function Add-ManagedFolder {
+    param([string]$Path)
+    $problem = Test-FolderAllowed $Path
+    if ($problem) { return $problem }
+    $full = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $cfg = Get-Config
+    $list = @($cfg.extraFolders) + @([pscustomobject]@{ path = $full; addedAt = (Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz') })
+    Save-Config ([pscustomobject]@{ extraFolders = $list })
+    Write-Log "Klasor eklendi: $full"
+    return $null
+}
+
+function Remove-ManagedFolder {
+    param([string[]]$Paths)
+    $cfg = Get-Config
+    $list = @($cfg.extraFolders | Where-Object { $Paths -notcontains $_.path })
+    Save-Config ([pscustomobject]@{ extraFolders = $list })
+    foreach ($p in $Paths) { Write-Log "Klasor takipten cikarildi: $p" }
 }
 
 # Uygulamanın kendi dosyası mı? (bu dosyalar listelenmez, silinmez, korunamaz)
@@ -146,7 +230,7 @@ function Add-Protection {
     $added = 0
     foreach ($path in $FullPaths) {
         $rel = Get-RelativePath $path
-        if (-not (Test-InBaseFolder $path) -or (Test-SystemPath $rel)) { continue }
+        if (-not (Test-InManagedFolder $path) -or (Test-SystemPath $rel)) { continue }
         if (-not ($entries | Where-Object { $_.path -eq $rel })) {
             [void]$entries.Add([pscustomobject]@{
                     path          = $rel
@@ -173,20 +257,22 @@ function Remove-Protection {
 #region Tarama
 # Klasör ağacını gezer; uygulama dosyalarını, gizli/sistem öğelerini ve bağlantı noktalarını (junction) atlar.
 function Get-ManagedItems {
+    param($Root = (Get-ManagedRoots)[0])
     $stack = New-Object System.Collections.Stack
-    $stack.Push($script:BaseFolder)
+    $stack.Push($Root.Path)
     while ($stack.Count -gt 0) {
         $dir = $stack.Pop()
-        $isRoot = ($dir -eq $script:BaseFolder)
+        $isRoot = ($dir -eq $Root.Path)
+        $appRoot = $isRoot -and $Root.IsBase
         foreach ($item in Get-ChildItem -LiteralPath $dir -ErrorAction SilentlyContinue) {
             if ($item.PSIsContainer) {
-                if ($isRoot -and $script:AppDirs -contains $item.Name) { continue }
+                if ($appRoot -and $script:AppDirs -contains $item.Name) { continue }
                 if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) { continue }
                 $stack.Push($item.FullName)
                 $item
             }
             else {
-                if ($isRoot -and $script:AppFiles -contains $item.Name) { continue }
+                if ($appRoot -and $script:AppFiles -contains $item.Name) { continue }
                 if ($item.Extension -eq '.ps1' -or $item.Name -eq 'README.md') { continue }
                 $item
             }
@@ -196,10 +282,12 @@ function Get-ManagedItems {
 
 # Dosyanın klasöre geliş zamanı: oluşturma ve değiştirme tarihlerinden yenisi.
 # Böylece klasöre kopyalanan eski bir dosya hemen "süresi dolmuş" sayılmaz.
+# -NotBefore: ek klasörlerde, klasörün eklendiği an (içindeki eski dosyalar hemen silinmesin diye).
 function Get-FileArrival {
-    param([System.IO.FileInfo]$File)
-    if ($File.CreationTime -gt $File.LastWriteTime) { return $File.CreationTime }
-    return $File.LastWriteTime
+    param([System.IO.FileInfo]$File, $NotBefore)
+    $t = if ($File.CreationTime -gt $File.LastWriteTime) { $File.CreationTime } else { $File.LastWriteTime }
+    if ($NotBefore -and $NotBefore -gt $t) { return $NotBefore }
+    return $t
 }
 
 function Get-ManagedFiles {
@@ -208,20 +296,26 @@ function Get-ManagedFiles {
     $protected = @{}
     foreach ($e in Get-ProtectedEntries) { $protected[([string]$e.path).ToLowerInvariant()] = $true }
 
-    foreach ($f in Get-ManagedItems) {
+    foreach ($root in Get-ManagedRoots -Config $Config) {
+    foreach ($f in Get-ManagedItems -Root $root) {
         if ($f.PSIsContainer) { continue }
         $rel = Get-RelativePath $f.FullName
-        $age = ($now - (Get-FileArrival $f)).TotalDays
+        $age = ($now - (Get-FileArrival $f -NotBefore $root.AddedAt)).TotalDays
         $isProtected = $protected.ContainsKey($rel.ToLowerInvariant())
         $stage = if ($isProtected) { 'protected' }
         elseif ($age -ge $Config.deletionDays) { 'expired' }
         elseif ($age -ge $Config.warningDays) { 'warning' }
         else { 'fresh' }
-        $folder = Split-Path -Parent $rel
+        if ($root.IsBase) { $folder = Split-Path -Parent $rel }
+        else {
+            $sub = Split-Path -Parent $f.FullName.Substring($root.Path.Length + 1)
+            $folder = $root.Label + $(if ($sub) { '\' + $sub } else { '' })
+        }
 
         [pscustomobject]@{
             FullName  = $f.FullName
             RelPath   = $rel
+            Root      = $root.Path
             Name      = $f.Name
             Folder    = $(if ($folder) { $folder } else { '' })
             Extension = $f.Extension
@@ -231,13 +325,14 @@ function Get-ManagedFiles {
             Stage     = $stage
         }
     }
+    }
 }
 #endregion
 
 #region Silme
 function Remove-ManagedFile {
     param([string]$FullPath, [bool]$Recycle)
-    if (-not (Test-InBaseFolder $FullPath)) { throw 'Dosya short-term-files klasorunun disinda' }
+    if (-not (Test-InManagedFolder $FullPath)) { throw 'Dosya takip edilen klasorlerin disinda' }
     if (Test-SystemPath (Get-RelativePath $FullPath)) { throw 'Uygulama dosyalari silinemez' }
     if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf)) { return $true }
     if ($Recycle) {
@@ -287,7 +382,7 @@ function Remove-Files {
 
 function Remove-EmptyFolders {
     $removed = 0
-    $dirs = @(Get-ManagedItems | Where-Object { $_.PSIsContainer } | Sort-Object { $_.FullName.Length } -Descending)
+    $dirs = @(Get-ManagedRoots | ForEach-Object { Get-ManagedItems -Root $_ } | Where-Object { $_.PSIsContainer } | Sort-Object { $_.FullName.Length } -Descending)
     foreach ($dir in $dirs) {
         if (Get-ChildItem -LiteralPath $dir.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1) { continue }
         try {

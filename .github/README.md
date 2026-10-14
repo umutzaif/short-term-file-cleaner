@@ -7,7 +7,7 @@
 **Masaüstündeki geçici dosyalarınızı unutun. Süresi yaklaşanları size sorar, süresi dolanları kendisi temizler.**
 
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-blue.svg)](https://www.microsoft.com/windows)
-[![Version](https://img.shields.io/badge/sürüm-3.2.1-7c5cff.svg)](../.system/CHANGELOG.md)
+[![Version](https://img.shields.io/badge/sürüm-3.3.0-7c5cff.svg)](../.system/CHANGELOG.md)
 [![License](https://img.shields.io/badge/lisans-MIT-green.svg)](../.system/LICENSE)
 
 </div>
@@ -67,6 +67,18 @@ Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği, açılı
 
 ---
 
+## 📂 Ek klasörler
+
+`short-term-files` dışında, örneğin **İndirilenler** gibi istediğiniz klasörleri de takip ettirebilirsiniz: **Klasörler → Klasör Ekle**. Eklenen klasörlerdeki dosyalar da süreleri dolunca İnceleme ekranında size sorulur, korunabilir ve otomatik temizlenir.
+
+- **Güvenli başlangıç:** Eklenen klasördeki dosyaların süresi, klasörün eklendiği andan başlar. Klasörde yıllardır duran dosyalar bile hemen silinmez; önce incelemenize sunulur.
+- **Korunan konumlar:** Sürücü kökleri (ör. `C:\`), Windows, Program Files, AppData ile kullanıcı klasörünün, Masaüstü'nün ve Belgeler'in tamamı eklenemez.
+- **Takipten çıkarmak** klasörü veya dosyaları silmez; yalnızca denetimi durdurur.
+
+![Klasörler](screenshots/klasorler.png)
+
+---
+
 ## 🔄 Güncellemeler
 
 Yeni bir sürüm çıktığında uygulamayı silip yeniden indirmeniz **gerekmez**:
@@ -92,6 +104,7 @@ Ayarlarınız, korunan dosya listeniz, işlem geçmişiniz ve klasördeki dosyal
 - **Dosya koruma:** Önemli dosyalarınızı kalıcı olarak koruyun
 - **Geri Dönüşüm Kutusu desteği:** İsterseniz dosyalar kalıcı silinmek yerine Geri Dönüşüm Kutusu'na gider
 - **Korunan sistem dosyaları:** Uygulamanın kendi dosyaları gizli `.system` klasöründedir. Listelerde görünmez, silinemez ve korumaları değiştirilemez
+- **Ek klasörler:** İndirilenler gibi başka klasörleri de takip ettirin
 - **Tema seçimi:** Gece, Gündüz veya Windows ayarını izleyen Sistem teması
 - **Uygulama içi güncelleme:** Yeni sürüm tek tıkla kurulur, ayarlar ve dosyalar korunur
 - **İşlem geçmişi:** Yapılan her silme ve koruma işlemi kaydedilir

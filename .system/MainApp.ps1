@@ -1,4 +1,4 @@
-﻿# Kısa Süreli Dosya Temizleyici v3.2
+﻿# Kısa Süreli Dosya Temizleyici v3.3
 # Ana uygulama: Genel Bakış, İnceleme (Sil / Koru / Atla), Korunanlar, Ayarlar, Geçmiş, Hakkında
 # GitHub: https://github.com/umutzaif/short-term-file-cleaner
 #
@@ -264,6 +264,7 @@ $navDefs = @(
     @('dash', 'Genel Bakış', $G.Home),
     @('review', 'İnceleme', $G.Review),
     @('protected', 'Korunanlar', $G.Shield),
+    @('folders', 'Klasörler', $G.Folder),
     @('settings', 'Ayarlar', $G.Settings),
     @('log', 'Geçmiş', $G.History),
     @('about', 'Hakkında', $G.Info)
@@ -701,8 +702,8 @@ $prot.Actions.Controls.Add((New-Button 'Dosya Ekle' $G.Add 'Solid' $C.Accent 140
             $dlg.Multiselect = $true
             $dlg.Title = 'Korunacak dosyaları seçin'
             if ($dlg.ShowDialog($form) -ne 'OK') { return }
-            $inside = @($dlg.FileNames | Where-Object { (Test-InBaseFolder $_) -and -not (Test-SystemPath (Get-RelativePath $_)) })
-            if ($inside.Count -lt $dlg.FileNames.Count) { Show-Toast 'Yalnızca short-term-files içindeki kendi dosyalarınız korunabilir' $C.Warning $G.Warn }
+            $inside = @($dlg.FileNames | Where-Object { (Test-InManagedFolder $_) -and -not (Test-SystemPath (Get-RelativePath $_)) })
+            if ($inside.Count -lt $dlg.FileNames.Count) { Show-Toast 'Yalnızca takip edilen klasörlerdeki kendi dosyalarınız korunabilir' $C.Warning $G.Warn }
             if ($inside.Count -gt 0) {
                 $n = Add-Protection $inside
                 Update-All
@@ -717,7 +718,7 @@ $prot.Actions.Controls.Add((New-Button 'Korumayı Kaldır' $G.Clear 'Outline' $C
             Show-Toast "$($rels.Count) dosyanın koruması kaldırıldı" $C.Warning $G.Shield
         }))
 $prot.Actions.Controls.Add((New-Button 'Eksikleri Temizle' $G.Refresh 'Ghost' $C.Accent 170 40 {
-            $missing = @(Get-ProtectedEntries | Where-Object { -not (Test-Path -LiteralPath (Join-Path $script:BaseFolder $_.path)) } | ForEach-Object { $_.path })
+            $missing = @(Get-ProtectedEntries | Where-Object { -not (Test-Path -LiteralPath (Resolve-ProtectedPath $_.path)) } | ForEach-Object { $_.path })
             if ($missing.Count -eq 0) { Show-Toast 'Listede eksik dosya yok'; return }
             Remove-Protection $missing
             Update-All
@@ -733,13 +734,13 @@ $protGrid = New-Grid
 [void]$protGrid.AddText('date', 'KORUNMA TARİHİ', 170, $false)
 [void]$protGrid.AddText('status', 'DURUM', 120, $false)
 $protGrid.Columns['date'].DefaultCellStyle.ForeColor = $C.Muted
-$protGrid.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Open-InExplorer (Join-Path $script:BaseFolder ([string]$protGrid.Rows[$e.RowIndex].Tag)) } })
+$protGrid.Add_CellDoubleClick({ param($s, $e) if ($e.RowIndex -ge 0) { Open-InExplorer (Resolve-ProtectedPath ([string]$protGrid.Rows[$e.RowIndex].Tag)) } })
 Add-Dock $protCard $protGrid 'Fill'
 
 function Update-ProtectedGrid {
     $protGrid.Rows.Clear()
     foreach ($e in Get-ProtectedEntries) {
-        $exists = Test-Path -LiteralPath (Join-Path $script:BaseFolder $e.path)
+        $exists = Test-Path -LiteralPath (Resolve-ProtectedPath $e.path)
         $date = [string]$e.protectedDate
         try { $date = ([datetime]$e.protectedDate).ToString('dd.MM.yyyy HH:mm') } catch { }
         $i = $protGrid.Rows.Add($false, [System.IO.Path]::GetExtension($e.path), $e.path, $date, $(if ($exists) { 'Mevcut' } else { 'Bulunamadı' }))
@@ -750,17 +751,103 @@ function Update-ProtectedGrid {
 }
 #endregion
 
+#region Sayfa: Klasörler
+$fold = New-Page 'folders' 'Klasörler' 'short-term-files dışında takip edilecek klasörleri ekleyin.'
+$fold.Actions.Controls.Add((New-Button 'Klasör Ekle' $G.Add 'Solid' $C.Accent 150 40 {
+            $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+            $dlg.Description = 'Takip edilecek klasörü seçin. İçindeki dosyalar da süreleri dolunca size sorulur ve temizlenir.'
+            $dlg.ShowNewFolderButton = $true
+            $dl = Join-Path $env:USERPROFILE 'Downloads'
+            if (Test-Path -LiteralPath $dl) { $dlg.SelectedPath = $dl }
+            if ($dlg.ShowDialog($form) -ne 'OK') { return }
+            $problem = Add-ManagedFolder $dlg.SelectedPath
+            if ($problem) { Show-Toast $problem $C.Warning $G.Warn; return }
+            Update-All
+            $cfg = Get-Config
+            Show-Toast "Klasör eklendi · içindeki dosyalar $($cfg.warningDays) gün sonra incelemenize sunulacak" $C.Success $G.Folder
+        }))
+$fold.Actions.Controls.Add((New-Button 'Takipten Çıkar' $G.Clear 'Outline' $C.Danger 170 40 {
+            $paths = @(Get-CheckedPaths $foldGrid | Where-Object { $_ -ne '__base__' })
+            if ($paths.Count -eq 0) { Show-Toast 'Takipten çıkarmak için eklediğiniz bir klasörü seçin' $C.Warning $G.Warn; return }
+            $ans = [System.Windows.Forms.MessageBox]::Show("$($paths.Count) klasör takipten çıkarılacak.`n`nKlasörler ve içindeki dosyalar silinmez; yalnızca artık denetlenmez.", 'Klasörler', 'OKCancel', 'Question')
+            if ($ans -ne 'OK') { return }
+            Remove-ManagedFolder $paths
+            Update-All
+            Show-Toast "$($paths.Count) klasör takipten çıkarıldı" $C.Warning $G.Folder
+        }))
+
+$foldInfo = New-Card 72 0
+$foldInfo.Width = 980
+$foldInfo.Fill = [StfcUi.Gfx]::Mix($C.Card, $C.Accent2, 0.10)
+$foldInfo.BorderColor = [StfcUi.Gfx]::Mix($C.Border, $C.Accent2, 0.35)
+$foldInfoGlyph = New-Label $G.Info (New-UiFont 14 ([StfcUi.Theme]::IconFamily)) ([StfcUi.Theme]::Tint($C.Accent2, 0.2)) 'MiddleCenter'
+$foldInfoGlyph.SetBounds(14, 0, 40, 72)
+$foldInfo.Controls.Add($foldInfoGlyph)
+$foldInfoText = New-Label 'Eklenen klasördeki dosyaların süresi, klasörün eklendiği andan başlar. Mevcut dosyalar hemen silinmez; önce incelemenize sunulur. Sistem klasörleri, sürücü kökleri ve Masaüstü''nün tamamı eklenemez.' (New-UiFont 9.5) $C.Text 'MiddleLeft'
+$foldInfoText.SetBounds(58, 4, 900, 64)
+$foldInfoText.Anchor = 'Top,Left,Right'
+$foldInfo.Controls.Add($foldInfoText)
+Add-Dock $fold.Page $foldInfo 'Top'
+Add-Spacer $fold.Page 16
+
+$foldCard = New-Card 100 10
+Add-Dock $fold.Page $foldCard 'Fill'
+$foldGrid = New-Grid
+[void]$foldGrid.AddCheck()
+[void]$foldGrid.AddText('name', 'KLASÖR', 200, $false)
+[void]$foldGrid.AddText('path', 'KONUM', 0, $true)
+[void]$foldGrid.AddText('files', 'DOSYA', 80, $false)
+[void]$foldGrid.AddText('size', 'BOYUT', 96, $false)
+[void]$foldGrid.AddText('added', 'EKLENME', 130, $false)
+$foldGrid.Columns['path'].DefaultCellStyle.ForeColor = $C.Muted
+$foldGrid.Columns['added'].DefaultCellStyle.ForeColor = $C.Muted
+$foldGrid.Columns['size'].DefaultCellStyle.Alignment = 'MiddleRight'
+$foldGrid.Add_CellDoubleClick({
+        param($s, $e)
+        if ($e.RowIndex -lt 0) { return }
+        $tag = [string]$foldGrid.Rows[$e.RowIndex].Tag
+        $path = if ($tag -eq '__base__') { $script:BaseFolder } else { $tag }
+        Start-Process explorer.exe -ArgumentList "`"$path`""
+    })
+Add-Dock $foldCard $foldGrid 'Fill'
+
+function Update-FoldersGrid {
+    $foldGrid.Rows.Clear()
+    $rows = @([pscustomobject]@{ Tag = '__base__'; Name = 'short-term-files (ana)'; Path = $script:BaseFolder; Added = '—'; Root = $script:BaseFolder.TrimEnd('\'); Missing = $false })
+    foreach ($e in $script:Config.extraFolders) {
+        $added = '—'
+        try { $added = ([datetime]$e.addedAt).ToString('dd.MM.yyyy') } catch { }
+        $rows += [pscustomobject]@{ Tag = $e.path; Name = (Split-Path -Leaf $e.path); Path = $e.path; Added = $added; Root = $e.path.TrimEnd('\'); Missing = -not (Test-Path -LiteralPath $e.path -PathType Container) }
+    }
+    foreach ($r in $rows) {
+        $files = @($script:Files | Where-Object { $_.Root -eq $r.Root })
+        $size = ($files | Measure-Object -Property Size -Sum).Sum
+        $count = if ($r.Missing) { 'Bulunamadı' } else { "$($files.Count)" }
+        $i = $foldGrid.Rows.Add($false, $r.Name, $r.Path, $count, (Format-Size $size), $r.Added)
+        $foldGrid.Rows[$i].Tag = $r.Tag
+        if ($r.Tag -eq '__base__') { $foldGrid.Rows[$i].Cells['name'].Style.ForeColor = [StfcUi.Theme]::Tint($C.Accent, 0.3) }
+        if ($r.Missing) { $foldGrid.Rows[$i].Cells['files'].Style.ForeColor = $C.Warning }
+    }
+    $foldGrid.ClearSelection()
+    $n = @($script:Config.extraFolders).Count
+    $fold.Subtitle.Text = if ($n -gt 0) { "short-term-files ile birlikte $n ek klasör takip ediliyor." } else { 'short-term-files dışında takip edilecek klasörleri ekleyin.' }
+}
+#endregion
+
 #region Sayfa: Ayarlar
 $set = New-Page 'settings' 'Ayarlar' 'Süreleri ve silme davranışını kendinize göre ayarlayın.'
 
+# Etiketler her zaman satırdaki düğme/anahtarların arkasında kalır; dar pencerede üstlerini örtmez.
 function New-SettingRow {
-    param($Parent, [string]$Title, [string]$Desc, [int]$Y)
+    param($Parent, [string]$Title, [string]$Desc, [int]$Y, [int]$Width = 560)
     $t = New-Label $Title (New-UiFont 11 'Segoe UI Semibold')
-    $t.SetBounds(22, $Y, 520, 26)
+    $t.SetBounds(22, $Y, [math]::Min(520, $Width), 26)
     $Parent.Controls.Add($t)
+    $t.SendToBack()
     $d = New-Label $Desc (New-UiFont 9.5) $C.Muted 'TopLeft'
-    $d.SetBounds(22, $Y + 28, 560, 22)
+    $d.SetBounds(22, $Y + 28, $Width, 22)
     $Parent.Controls.Add($d)
+    $d.SendToBack()
 }
 
 function New-DayInput {
@@ -838,7 +925,8 @@ Add-Dock $set.Page $recCard 'Top'
 Add-Spacer $set.Page 16
 $themeCard = New-Card 90 0
 $themeCard.Width = 980
-New-SettingRow $themeCard 'Tema' 'Uygulamanın görünümünü seçin; uygulama yeni temayla yeniden açılır.' 20
+# Düğmeler sağa yaslı: en dar pencerede bile açıklamanın bittiği yerden sonra başlarlar (çakışma olmaz).
+New-SettingRow $themeCard 'Tema' 'Uygulama seçilen temayla yeniden açılır.' 20 320
 $script:ThemeButtons = @()
 $themeDefs = @(@('dark', 'Gece', $G.Moon, 600), @('light', 'Gündüz', $G.Sun, 718), @('system', 'Sistem', $G.Monitor, 836))
 foreach ($td in $themeDefs) {
@@ -848,6 +936,7 @@ foreach ($td in $themeDefs) {
     $tb.SetBounds($td[3], 25, 110, 40)
     $tb.Anchor = 'Top,Right'
     $themeCard.Controls.Add($tb)
+    $tb.BringToFront()
     $script:ThemeButtons += $tb
 }
 Add-Dock $set.Page $themeCard 'Top'
@@ -1216,6 +1305,7 @@ function Update-All {
     Update-Dashboard
     Update-ReviewGrid
     Update-ProtectedGrid
+    Update-FoldersGrid
     if ($script:CurrentPage -eq 'log') { Update-LogView }
 }
 
