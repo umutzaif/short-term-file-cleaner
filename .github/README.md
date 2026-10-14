@@ -51,8 +51,6 @@ Oturum açıldığında incelenecek dosya varsa uygulama bu sayfayla açılır. 
 
 ![İnceleme](screenshots/inceleme.png)
 
-### Güven veren silme
-**Sil**'e bastığınızda önce neyin silineceğini gösteren bir onay penceresi açılır. Ardından her dosya silindikçe dolan bir ilerleme halkası, en sonda da kaç dosyanın silindiğini ve ne kadar yer açıldığını gösteren bir özet görürsünüz. Silinemeyen bir dosya olursa (örneğin başka bir programda açıksa) bu da açıkça belirtilir.
 
 | Onay | İlerleme | Sonuç |
 |:---:|:---:|:---:|
@@ -73,7 +71,6 @@ Uyarı ve otomatik silme süreleri, Geri Dönüşüm Kutusu seçeneği, açılı
 - **Dosya koruma:** Önemli dosyalarınızı kalıcı olarak koruyun
 - **Geri Dönüşüm Kutusu desteği:** İsterseniz dosyalar kalıcı silinmek yerine Geri Dönüşüm Kutusu'na gider
 - **Korunan sistem dosyaları:** Uygulamanın kendi dosyaları gizli `.system` klasöründedir. Listelerde görünmez, silinemez ve korumaları değiştirilemez
-- **Modern koyu arayüz:** İstatistik kartları, yaşam döngüsü grafiği, dosya türü rozetleri, yüksek DPI desteği
 - **İşlem geçmişi:** Yapılan her silme ve koruma işlemi kaydedilir
 
 ---
